@@ -17,6 +17,13 @@ android {
             minifyEnabled false
         }
     }
+   
+    externalNativeBuild {
+        ndkBuild {
+            path "src/main/cpp/libusb/android/jni/Android.mk"
+	}
+    }
+
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
