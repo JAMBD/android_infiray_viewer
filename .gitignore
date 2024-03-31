@@ -1,3 +1,5 @@
 .gradle
+app/.cxx/
 /local.properties
 build/
+*.swp

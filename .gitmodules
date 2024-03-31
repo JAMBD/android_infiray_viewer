@@ -1,3 +1,12 @@
 [submodule "app/src/main/cpp/libusb"]
 	path = app/src/main/cpp/libusb
 	url = https://github.com/libusb/libusb.git
+[submodule "app/src/main/cpp/libuvc"]
+	path = app/src/main/cpp/libuvc
+	url = https://github.com/libuvc/libuvc.git
+[submodule "app/src/main/cpp/libjpeg-turbo"]
+	path = app/src/main/cpp/libjpeg-turbo
+	url = https://github.com/libjpeg-turbo/libjpeg-turbo.git
+[submodule "app/src/main/cpp/libyuv"]
+	path = app/src/main/cpp/libyuv
+	url = https://chromium.googlesource.com/libyuv/libyuv
