@@ -1,12 +1,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+	<uses-feature android:name="android.hardware.usb.host" />
+	<uses-permission android:name="android.permission.USB_PERMISSION" />
+	<uses-permission android:name="android.permission.CAMERA" />
+	<uses-feature android:name="android.hardware.camera" android:required="false"/>
     <application
         android:icon="@drawable/icon"
         android:label="@string/app_label"
         android:theme="@style/AppTheme">
         <activity
             android:name=".MainActivity"
-	    android:label="@string/app_label"
-	    android:exported="true">
+	    	android:label="@string/app_label"
+	    	android:exported="true">
+			<intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"/>
+            </intent-filter>
+            <meta-data android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" android:resource="@xml/device_filter"/>
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
