@@ -17,33 +17,8 @@ JNIEXPORT void JNICALL Java_info_jnlm_thermal_1camera_MainActivity_initializeLib
         LOGD("libusb_set_option failed: %d\n", r);
         return;
     }
-    r = libusb_init(&ctx);
-	if (r < 0) {
-        LOGD("libusb_init failed: %d\n", r);
-        return;
-    }
-	r = libusb_wrap_sys_device(ctx, (intptr_t)fd, &devh);
-    if (r < 0) {
-        LOGD("libusb_wrap_sys_device failed: %d\n", r);
-        return;
-    } else if (devh == NULL) {
-        LOGD("libusb_wrap_sys_device returned invalid handle\n");
-        return;
-    }
-	
-	libusb_device *dev = libusb_get_device(devh);
-	struct libusb_device_descriptor desc;
-	
-	r = libusb_get_device_descriptor(dev, &desc);
-    if (r < 0) {
-        LOGD("failed to get device descriptor");
-        return;
-    }
-
-	LOGD("%04X:%04X", desc.idVendor, desc.idProduct);
-
 	uvc_context_t *uvc_ctx = NULL;
-	r = uvc_init(&uvc_ctx, ctx);
+	r = uvc_init(&uvc_ctx, NULL);
 	
 	if (r < 0) {
 		LOGD("failed uvc_init: %s (%d)", uvc_strerror((uvc_error)r), r);
@@ -85,6 +60,7 @@ JNIEXPORT void JNICALL Java_info_jnlm_thermal_1camera_MainActivity_initializeLib
 	LOGD("bMaxVersion: %u", static_cast<unsigned>(ctrl.bMaxVersion));
 	LOGD("bInterfaceNumber: %u", static_cast<unsigned>(ctrl.bInterfaceNumber));
 
+	ctrl.dwMaxVideoFrameSize = ctrl.dwMaxPayloadTransferSize * 4;
 	uvc_stream_handle_t *strmh;
 
 	r = uvc_stream_open_ctrl(uvc_devh, &strmh, &ctrl);
