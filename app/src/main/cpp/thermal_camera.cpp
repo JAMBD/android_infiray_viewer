@@ -8,38 +8,38 @@
 #define  LOGD(...)  __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 
 
-JNIEXPORT void JNICALL Java_info_jnlm_thermal_1camera_MainActivity_initializeLibUsb(JNIEnv *env, jobject thiz, jint fd) {
+JNIEXPORT jlong JNICALL Java_info_jnlm_thermal_1camera_MainActivity_initializeStream(JNIEnv *env, jobject thiz, jint fd) {
 	libusb_context *ctx = NULL;
     libusb_device_handle *devh = NULL;
     int r = 0;
     r = libusb_set_option(NULL, LIBUSB_OPTION_NO_DEVICE_DISCOVERY, NULL);
     if (r != LIBUSB_SUCCESS) {
         LOGD("libusb_set_option failed: %d\n", r);
-        return;
+        return -1;
     }
 	uvc_context_t *uvc_ctx = NULL;
 	r = uvc_init(&uvc_ctx, NULL);
 	
 	if (r < 0) {
 		LOGD("failed uvc_init: %s (%d)", uvc_strerror((uvc_error)r), r);
-		return;
+		return -1;
 	}
 
 	uvc_device_handle_t *uvc_devh;
 	r = uvc_wrap(fd, uvc_ctx, &uvc_devh);
 	if (r < 0) {
 		LOGD("failed uvc_wrap: %s (%d)", uvc_strerror((uvc_error)r), r);
-		return;
+		return -1;
 	}
 
 	uvc_stream_ctrl_t ctrl;
 
-	r = uvc_get_stream_ctrl_format_size(uvc_devh, &ctrl, UVC_FRAME_FORMAT_ANY, 256, 192, 25);
+	r = uvc_get_stream_ctrl_format_size(uvc_devh, &ctrl, UVC_FRAME_FORMAT_ANY, 256, 384, 25);
 
 	
 	if (r < 0) {
 		LOGD("failed stream negotiation: %s (%d)", uvc_strerror((uvc_error)r), r);
-		return;
+		return -1;
 	}
 	
 	LOGD("bmHint: %u", ctrl.bmHint);
@@ -60,28 +60,41 @@ JNIEXPORT void JNICALL Java_info_jnlm_thermal_1camera_MainActivity_initializeLib
 	LOGD("bMaxVersion: %u", static_cast<unsigned>(ctrl.bMaxVersion));
 	LOGD("bInterfaceNumber: %u", static_cast<unsigned>(ctrl.bInterfaceNumber));
 
-	ctrl.dwMaxVideoFrameSize = ctrl.dwMaxPayloadTransferSize * 4;
 	uvc_stream_handle_t *strmh;
 
 	r = uvc_stream_open_ctrl(uvc_devh, &strmh, &ctrl);
 	if (r < 0) {
 		LOGD("failed to open stream: %s (%d)", uvc_strerror((uvc_error)r), r);
-		return;
+		return -1;
 	}
 
 	r = uvc_stream_start(strmh, NULL, NULL, 0);
 	if (r < 0) {
 		LOGD("failed to start stream: %s (%d)", uvc_strerror((uvc_error)r), r);
-		return;
+		return -1;
 	}
+	LOGD("Stream started");
+	return reinterpret_cast<jlong>(strmh);
+}
 
+JNIEXPORT jbyteArray JNICALL Java_info_jnlm_thermal_1camera_MainActivity_grabFrame(JNIEnv *env, jobject thiz, jlong stream){
+	uvc_error r;
+	uvc_stream_handle_t *strmh = reinterpret_cast<uvc_stream_handle_t*>(stream);
 	uvc_frame_t *frame;
 	r = uvc_stream_get_frame(strmh, &frame, 1000000);
 	if (r < 0) {
-		LOGD("failed to get frame: %s (%d)", uvc_strerror((uvc_error)r), r);
-		return;
+		LOGD("failed to get frame: %s (%d)", uvc_strerror(r), r);
+		return nullptr;
 	}
+	
+	LOGD("Frame size is %dx%d %zu %zu", frame->width, frame->height, frame->data_bytes, frame->step);
 
-//	libusb_close(devh);
-	LOGD("SUCESS!");
+	jbyteArray result = env->NewByteArray(frame->data_bytes);
+    if (result == nullptr) {
+        return nullptr;
+    }
+	
+	env->SetByteArrayRegion(result, 0, frame->data_bytes, (jbyte*)frame->data);
+
+	return result;
 }

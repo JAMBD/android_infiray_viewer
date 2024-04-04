@@ -5,10 +5,19 @@
     android:gravity="center">
 
     <Button
-        android:id="@+id/myButton"
+        android:id="@+id/initStreamButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Click Me" />
+        android:text="Initialize stream" />
+    <Button
+        android:id="@+id/getFrameButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Get frame" />
+	<ImageView
+		android:id="@+id/imageView"
+		android:layout_width="192dp"
+        android:layout_height="256dp" />
 
 </LinearLayout>
 

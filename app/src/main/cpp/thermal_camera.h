@@ -4,7 +4,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-JNIEXPORT void JNICALL Java_info_jnlm_thermal_1camera_MainActivity_initializeLibUsb(JNIEnv *env, jobject thiz, jint fd); 
+JNIEXPORT jlong JNICALL Java_info_jnlm_thermal_1camera_MainActivity_initializeStream(JNIEnv *env, jobject thiz, jint fd); 
+
+JNIEXPORT jbyteArray JNICALL Java_info_jnlm_thermal_1camera_MainActivity_grabFrame(JNIEnv *env, jobject thiz, jlong stream);
+
+
 #ifdef __cplusplus
 }
 #endif
