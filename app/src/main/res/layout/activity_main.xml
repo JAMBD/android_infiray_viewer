@@ -2,22 +2,28 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:gravity="center">
-
+    android:gravity="center"
+	android:keepScreenOn="true"
+	android:background="@color/background">
+	<ImageView
+		android:id="@+id/imageView"
+		android:layout_width="384dp"
+        android:layout_height="512dp" />
     <Button
-        android:id="@+id/initStreamButton"
+        android:id="@+id/getImageButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Initialize stream" />
+        android:text="Capture" />
     <Button
         android:id="@+id/getFrameButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Get frame" />
-	<ImageView
-		android:id="@+id/imageView"
-		android:layout_width="192dp"
-        android:layout_height="256dp" />
+        android:text="Capture raw" />
+    <Button
+        android:id="@+id/ctrlButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Ctrl" />
 
 </LinearLayout>
 

@@ -15,21 +15,21 @@ JNIEXPORT jlong JNICALL Java_info_jnlm_thermal_1camera_MainActivity_initializeSt
     r = libusb_set_option(NULL, LIBUSB_OPTION_NO_DEVICE_DISCOVERY, NULL);
     if (r != LIBUSB_SUCCESS) {
         LOGD("libusb_set_option failed: %d\n", r);
-        return -1;
+        return 0;
     }
 	uvc_context_t *uvc_ctx = NULL;
 	r = uvc_init(&uvc_ctx, NULL);
 	
 	if (r < 0) {
 		LOGD("failed uvc_init: %s (%d)", uvc_strerror((uvc_error)r), r);
-		return -1;
+		return 0;
 	}
 
 	uvc_device_handle_t *uvc_devh;
 	r = uvc_wrap(fd, uvc_ctx, &uvc_devh);
 	if (r < 0) {
 		LOGD("failed uvc_wrap: %s (%d)", uvc_strerror((uvc_error)r), r);
-		return -1;
+		return 0;
 	}
 
 	uvc_stream_ctrl_t ctrl;
@@ -39,7 +39,7 @@ JNIEXPORT jlong JNICALL Java_info_jnlm_thermal_1camera_MainActivity_initializeSt
 	
 	if (r < 0) {
 		LOGD("failed stream negotiation: %s (%d)", uvc_strerror((uvc_error)r), r);
-		return -1;
+		return 0;
 	}
 	
 	LOGD("bmHint: %u", ctrl.bmHint);
@@ -65,13 +65,13 @@ JNIEXPORT jlong JNICALL Java_info_jnlm_thermal_1camera_MainActivity_initializeSt
 	r = uvc_stream_open_ctrl(uvc_devh, &strmh, &ctrl);
 	if (r < 0) {
 		LOGD("failed to open stream: %s (%d)", uvc_strerror((uvc_error)r), r);
-		return -1;
+		return 0;
 	}
 
 	r = uvc_stream_start(strmh, NULL, NULL, 0);
 	if (r < 0) {
 		LOGD("failed to start stream: %s (%d)", uvc_strerror((uvc_error)r), r);
-		return -1;
+		return 0;
 	}
 	LOGD("Stream started");
 	return reinterpret_cast<jlong>(strmh);
@@ -87,8 +87,6 @@ JNIEXPORT jbyteArray JNICALL Java_info_jnlm_thermal_1camera_MainActivity_grabFra
 		return nullptr;
 	}
 	
-	LOGD("Frame size is %dx%d %zu %zu", frame->width, frame->height, frame->data_bytes, frame->step);
-
 	jbyteArray result = env->NewByteArray(frame->data_bytes);
     if (result == nullptr) {
         return nullptr;
