@@ -8,6 +8,7 @@ JNIEXPORT jlong JNICALL Java_info_jnlm_thermal_1camera_MainActivity_initializeSt
 
 JNIEXPORT jbyteArray JNICALL Java_info_jnlm_thermal_1camera_MainActivity_grabFrame(JNIEnv *env, jobject thiz, jlong stream);
 
+JNIEXPORT void JNICALL Java_info_jnlm_thermal_1camera_MainActivity_sendCtrl(JNIEnv *env, jobject thiz, jint fd, jint color); 
 
 #ifdef __cplusplus
 }
