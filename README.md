@@ -1,17 +1,18 @@
-# Minimal andoid demo for UVC cameras
+# Third party andoid app for Infiray thermal cameras
 
-This was a minimal app that tried to use the libraries as-is from HEAD for libuvc and libusb.
+An implementation of a UVC camera app specific to the Infiray P2Pro thermal camera.
 
-To get the app working I did need to patch libuvc to limit the maximum packets_per_transfer.
-This is availible as `libuvc.patch`.
-
-This app also demonstrate a minimal save of the image and raw frame. As well as sending
-control transfers to the camera.
-
+Current features:
+* Views the YUV422 stream.
+* Saves the YUV422 stream as a .png into a photo album.
+* Saves the whole frame (including the 16bit image) into the Downloads folder.
+* Send control transfers to the camera that changes the colour scheme.
 
 ## Prior works
 
 * [saki4510t/UVCCamera](https://github.com/saki4510t/UVCCamera/tree/master)
-* [Peter-St/Android-UVC-Camera](https://github.com/Peter-St/Android-UVC-Camera/master)
+* [Peter-St/Android-UVC-Camera](https://github.com/Peter-St/Android-UVC-Camera/tree/master)
+* [LeoDJ/P2Pro-Viewer](https://github.com/LeoDJ/P2Pro-Viewer/tree/main)
 
 Thanks to Peter-St for having an app on the playstore that proved my device can operate on my phone.
+
