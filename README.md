@@ -8,6 +8,8 @@ Current features:
 * Saves the whole frame (including the 16bit image) into the Downloads folder.
 * Send control transfers to the camera that changes the colour scheme.
 
+![Screenshot](images/screenshot.jpg?raw=true "Screenshot")
+
 ## Prior works
 
 * [saki4510t/UVCCamera](https://github.com/saki4510t/UVCCamera/tree/master)
