@@ -23,7 +23,11 @@ import android.util.Log;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.HashMap;
 import java.io.FileNotFoundException;
+import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
+import java.nio.ByteOrder;
 
 import android.net.Uri;
 import android.content.ContentValues;
@@ -32,6 +36,9 @@ import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.graphics.Bitmap;
+import java.io.File;
+import java.io.InputStream;
+import java.io.FileOutputStream;
 
 
 import android.view.WindowManager;
@@ -42,7 +49,7 @@ import android.util.DisplayMetrics;
 import android.os.Handler;
 import android.graphics.Matrix;
 
-import java.util.HashMap;
+import com.arthenica.mobileffmpeg.FFmpeg;
 
 public class MainActivity extends Activity {
 	static {
@@ -56,7 +63,12 @@ public class MainActivity extends Activity {
 
 	private static final String ACTION_USB_PERMISSION =
             "info.jnlm.thermal_camera.USB_PERMISSION";
+	private static final String kLutFileName = "colormap_lut.cube";
+	private static final int kFrameWidth = 256;
+	private static final int kFrameHeight = 192;
+	private static final int kPixelSize = 2;
 	
+	private int[] LUT = new int[65536];
 	private long native_stream = 0;
 	private byte[] last_frame;
 	private float scale = 1.0f;
@@ -66,39 +78,40 @@ public class MainActivity extends Activity {
 	private boolean isRecording = false;
     private Uri fileUri;
     private OutputStream outputStream;
+	private String rawVideoFilename = "invalid";
 
 
-
-	private static final int kFrameWidth = 256;
-	private static final int kFrameHeight = 192;
-	private static final int kPixelSize = 2;
-
-	private final int[] r_v = {-175, -174, -172, -171, -169, -168, -167, -165, -164, -163, -161, -160, -159, -157, -156, -154, -153, -152, -150, -149, -148, -146, -145, -143, -142, -141, -139, -138, -137, -135, -134, -132, -131, -130, -128, -127, -126, -124, -123, -121, -120, -119, -117, -116, -115, -113, -112, -111, -109, -108, -106, -105, -104, -102, -101, -100, -98, -97, -95, -94, -93, -91, -90, -89, -87, -86, -84, -83, -82, -80, -79, -78, -76, -75, -74, -72, -71, -69, -68, -67, -65, -64, -63, -61, -60, -58, -57, -56, -54, -53, -52, -50, -49, -47, -46, -45, -43, -42, -41, -39, -38, -37, -35, -34, -32, -31, -30, -28, -27, -26, -24, -23, -21, -20, -19, -17, -16, -15, -13, -12, -10, -9, -8, -6, -5, -4, -2, -1, 0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 15, 16, 17, 19, 20, 21, 23, 24, 26, 27, 28, 30, 31, 32, 34, 35, 37, 38, 39, 41, 42, 43, 45, 46, 47, 49, 50, 52, 53, 54, 56, 57, 58, 60, 61, 63, 64, 65, 67, 68, 69, 71, 72, 74, 75, 76, 78, 79, 80, 82, 83, 84, 86, 87, 89, 90, 91, 93, 94, 95, 97, 98, 100, 101, 102, 104, 105, 106, 108, 109, 111, 112, 113, 115, 116, 117, 119, 120, 121, 123, 124, 126, 127, 128, 130, 131, 132, 134, 135, 137, 138, 139, 141, 142, 143, 145, 146, 148, 149, 150, 152, 153, 154, 156, 157, 159, 160, 161, 163, 164, 165, 167, 168, 169, 171, 172, 174};
-	private final int[] g_v = {89, 88, 87, 87, 86, 85, 85, 84, 83, 83, 82, 81, 80, 80, 79, 78, 78, 77, 76, 76, 75, 74, 73, 73, 72, 71, 71, 70, 69, 69, 68, 67, 67, 66, 65, 64, 64, 63, 62, 62, 61, 60, 60, 59, 58, 57, 57, 56, 55, 55, 54, 53, 53, 52, 51, 50, 50, 49, 48, 48, 47, 46, 46, 45, 44, 43, 43, 42, 41, 41, 40, 39, 39, 38, 37, 36, 36, 35, 34, 34, 33, 32, 32, 31, 30, 30, 29, 28, 27, 27, 26, 25, 25, 24, 23, 23, 22, 21, 20, 20, 19, 18, 18, 17, 16, 16, 15, 14, 13, 13, 12, 11, 11, 10, 9, 9, 8, 7, 6, 6, 5, 4, 4, 3, 2, 2, 1, 0, 0, 0, -1, -2, -2, -3, -4, -4, -5, -6, -6, -7, -8, -9, -9, -10, -11, -11, -12, -13, -13, -14, -15, -16, -16, -17, -18, -18, -19, -20, -20, -21, -22, -23, -23, -24, -25, -25, -26, -27, -27, -28, -29, -30, -30, -31, -32, -32, -33, -34, -34, -35, -36, -36, -37, -38, -39, -39, -40, -41, -41, -42, -43, -43, -44, -45, -46, -46, -47, -48, -48, -49, -50, -50, -51, -52, -53, -53, -54, -55, -55, -56, -57, -57, -58, -59, -60, -60, -61, -62, -62, -63, -64, -64, -65, -66, -67, -67, -68, -69, -69, -70, -71, -71, -72, -73, -73, -74, -75, -76, -76, -77, -78, -78, -79, -80, -80, -81, -82, -83, -83, -84, -85, -85, -86, -87, -87, -88};
-	private final int[] g_u = {43, 42, 42, 42, 41, 41, 41, 40, 40, 40, 39, 39, 39, 38, 38, 38, 37, 37, 37, 36, 36, 36, 35, 35, 35, 34, 34, 34, 33, 33, 33, 32, 32, 32, 31, 31, 31, 30, 30, 30, 29, 29, 29, 28, 28, 28, 27, 27, 27, 26, 26, 25, 25, 25, 24, 24, 24, 23, 23, 23, 22, 22, 22, 21, 21, 21, 20, 20, 20, 19, 19, 19, 18, 18, 18, 17, 17, 17, 16, 16, 16, 15, 15, 15, 14, 14, 14, 13, 13, 13, 12, 12, 12, 11, 11, 11, 10, 10, 10, 9, 9, 9, 8, 8, 8, 7, 7, 7, 6, 6, 6, 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1, 0, 0, 0, 0, 0, -1, -1, -1, -2, -2, -2, -3, -3, -3, -4, -4, -4, -5, -5, -5, -6, -6, -6, -7, -7, -7, -8, -8, -8, -9, -9, -9, -10, -10, -10, -11, -11, -11, -12, -12, -12, -13, -13, -13, -14, -14, -14, -15, -15, -15, -16, -16, -16, -17, -17, -17, -18, -18, -18, -19, -19, -19, -20, -20, -20, -21, -21, -21, -22, -22, -22, -23, -23, -23, -24, -24, -24, -25, -25, -25, -26, -26, -27, -27, -27, -28, -28, -28, -29, -29, -29, -30, -30, -30, -31, -31, -31, -32, -32, -32, -33, -33, -33, -34, -34, -34, -35, -35, -35, -36, -36, -36, -37, -37, -37, -38, -38, -38, -39, -39, -39, -40, -40, -40, -41, -41, -41, -42, -42, -42};
-	private final int[] b_u = {-221, -220, -218, -216, -214, -213, -211, -209, -207, -206, -204, -202, -200, -199, -197, -195, -194, -192, -190, -188, -187, -185, -183, -181, -180, -178, -176, -174, -173, -171, -169, -168, -166, -164, -162, -161, -159, -157, -155, -154, -152, -150, -148, -147, -145, -143, -142, -140, -138, -136, -135, -133, -131, -129, -128, -126, -124, -123, -121, -119, -117, -116, -114, -112, -110, -109, -107, -105, -103, -102, -100, -98, -97, -95, -93, -91, -90, -88, -86, -84, -83, -81, -79, -77, -76, -74, -72, -71, -69, -67, -65, -64, -62, -60, -58, -57, -55, -53, -51, -50, -48, -46, -45, -43, -41, -39, -38, -36, -34, -32, -31, -29, -27, -25, -24, -22, -20, -19, -17, -15, -13, -12, -10, -8, -6, -5, -3, -1, 0, 1, 3, 5, 6, 8, 10, 12, 13, 15, 17, 19, 20, 22, 24, 25, 27, 29, 31, 32, 34, 36, 38, 39, 41, 43, 45, 46, 48, 50, 51, 53, 55, 57, 58, 60, 62, 64, 65, 67, 69, 71, 72, 74, 76, 77, 79, 81, 83, 84, 86, 88, 90, 91, 93, 95, 97, 98, 100, 102, 103, 105, 107, 109, 110, 112, 114, 116, 117, 119, 121, 123, 124, 126, 128, 129, 131, 133, 135, 136, 138, 140, 142, 143, 145, 147, 148, 150, 152, 154, 155, 157, 159, 161, 162, 164, 166, 168, 169, 171, 173, 174, 176, 178, 180, 181, 183, 185, 187, 188, 190, 192, 194, 195, 197, 199, 200, 202, 204, 206, 207, 209, 211, 213, 214, 216, 218, 220};
 	public Bitmap bitmapARGBFromByte(byte[] data){
 		int[] pixels = new int[kFrameWidth * kFrameHeight];
-		for (int i=0; i<kFrameWidth; i++){
-			for (int j=0; j<kFrameHeight; j++){
-				
-				final int y = last_frame[(i*kFrameHeight + j) * 2] & 0xFF;
-				final int v = last_frame[1 + (i*kFrameHeight + (j&0xFE)) * 2] & 0xFF;
-				final int u = last_frame[1 + (i*kFrameHeight + (j&0xFE)+1) * 2] & 0xFF;
-				int r = y + r_v[v];
-				int g = y + g_v[v] + g_u[u];
-				int b = y + b_u[u];
-				if (r < 0) r = 0;
-				if (g < 0) g = 0;
-				if (b < 0) b = 0;
-				if (r > 255) r = 255;
-				if (g > 255) g = 255;
-				if (b > 255) b = 255;
-				pixels[i*kFrameHeight + j] = 0xFF000000 | r | (g<<8) | (b << 16);
+		final int kNumPixels = kFrameWidth * kFrameHeight;
+
+		float min = 1; float max = 0;
+		for (int i = 0; i < kNumPixels; i++) {
+			int offset = 2 * i; // 2 bytes per uint16_t
+			int val_uint16_t = (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8);
+			float val_float = val_uint16_t / 65535.0f;
+			if (val_float < min) min = val_float;
+			if (val_float > max) max = val_float;
+		}
+
+		for (int i = 0; i < kNumPixels; i++) {
+			int offset = 2 * i; // 2 bytes per uint16_t
+			int val_uint16_t = (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8);
+
+			float val_float = (val_uint16_t / 65535.0f - min) / (max - min);
+			assert val_float >= 0.0f && val_float <= 1.0f;
+			val_uint16_t = (int) (val_float * 65535.0f);
+
+
+			if (i == 10000) {
+				Log.d("ThermalCamera", i + ", " + LUT[i % 65536] + ", " + String.format("0x%08X", LUT[i % 65536]));
 			}
+
+			pixels[i] = LUT[val_uint16_t]; // Lookup the ARGB value from LUT
 		}
 
 		return Bitmap.createBitmap(pixels, kFrameWidth, kFrameHeight, Bitmap.Config.ARGB_8888);
+
 	}
 
 	private void MaybeEncodeFrame(byte[] frame) {
@@ -122,7 +135,63 @@ public class MainActivity extends Activity {
 		return getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues);
 	}
 
+	// ffmpeg only deals in file paths, not URI's, so it is copied here to somewhere that corresponds to a file path.
+	public void prepareLUTFile() {
+		File lutFile = new File(getExternalFilesDir(null), kLutFileName);
+
+		try (InputStream is = getAssets().open(kLutFileName);
+				OutputStream os = new FileOutputStream(lutFile)) {
+			byte[] buffer = new byte[1024];
+			int length;
+			while ((length = is.read(buffer)) != -1) {
+				os.write(buffer, 0, length);
+			}
+			Log.i("ThermalCamera", "LUT file copied to app-specific storage.");
+		} catch (IOException e) {
+			Log.e("ThermalCamera", "Error copying LUT file", e);
+		}
+	}
+
+	public void loadLUT() {
+		int kLutSize = 65536 * 4;
+
+		try (InputStream is = getAssets().open("colormap_lut.bin")) {
+			byte[] buffer = new byte[kLutSize];
+			int length = is.read(buffer);
+			Log.e("ThermalCamera", "loaded this many bytes: " + length);
+			assert length == kLutSize;
+			ByteBuffer byteBuffer = ByteBuffer.wrap(buffer);
+			byteBuffer.order(ByteOrder.LITTLE_ENDIAN);
+			IntBuffer intBuffer = byteBuffer.asIntBuffer();
+			intBuffer.get(LUT); // Read the buffer into LUT directly
+
+			for (int i = 0; i < 65536; i++) {
+				if(i % 1337 == 0) {
+					Log.i("ThermalCamera", i + ", " + LUT[i] + ", " + String.format("0x%08X", LUT[i]));
+				}
+			}
+
+			Log.i("ThermalCamera", "LUT file copied to local memory.");
+		} catch (IOException e) {
+			Log.e("ThermalCamera", "Error copying LUT file", e);
+		}
+	}
+
+	public void ConvertRawToMp4(String inputFilePath, String outputFilePath) {
+		File lutFile = new File(getExternalFilesDir(null), kLutFileName);
+		String cmd = String.format(
+				"-y -f rawvideo -pixel_format gray16le -video_size 256x192 -framerate 25 -i %s -vf \"normalize=blackpt=black:whitept=white, lut3d=%s\" %s",
+				inputFilePath, lutFile.getAbsolutePath(), outputFilePath);
+
+		int rc = FFmpeg.execute(cmd);
+		if (rc != 0) {
+			Toast.makeText(this, "Conversion failed", Toast.LENGTH_SHORT).show();
+			Log.e("ThermalCamera", "FFmpeg conversion failed with exit code: " + rc);
+		}
+	}
+
 	public void startRecording(View view) {
+		// prepareLUTFile();
 
 		String fileName = "thermal_camera_"
 				+ new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date()) + ".bin";
@@ -145,6 +214,7 @@ public class MainActivity extends Activity {
 
 		findViewById(R.id.startVideoButton).setEnabled(false);
 		findViewById(R.id.stopVideoButton).setEnabled(true);
+		rawVideoFilename = fileName;
 		Toast.makeText(this, "Started recording", Toast.LENGTH_SHORT).show();
 		isRecording = true;
 	}
@@ -163,6 +233,19 @@ public class MainActivity extends Activity {
 
 		findViewById(R.id.startVideoButton).setEnabled(true);
 		findViewById(R.id.stopVideoButton).setEnabled(false);
+
+		// These direct file paths are very poor practice and should not even in fact work after some version of Android. But, they do work.
+		String fileIn =  "/storage/emulated/0/Download/" + rawVideoFilename;
+		// The thermal_camera dir is actually created by saveImageToGallery.
+		String fileOut = "/storage/emulated/0/Pictures/thermal_camera/" + rawVideoFilename.replace(".bin", ".mp4");
+		Log.v("ThermalCamera", "Converting " + fileIn + " to " + fileOut);
+		ConvertRawToMp4(fileIn, fileOut);
+		// Make it show up in google photos straightaway:
+		File file = new File(fileOut);
+		Intent intent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+		intent.setData(Uri.fromFile(file));
+		this.sendBroadcast(intent);
+
 		Toast.makeText(this, "Stopped recording", Toast.LENGTH_SHORT).show();
 	}
 
@@ -190,6 +273,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onStart() {
         super.onStart();
+		loadLUT();
         handler.post(runnable); // Start the periodic task
     }
 
