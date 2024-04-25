@@ -1,4 +1,7 @@
 .gradle
+*.bin
+*.mp4
+*.cube
 app/.cxx/
 /local.properties
 build/
