@@ -48,8 +48,13 @@ import java.io.OutputStream;
 import android.util.DisplayMetrics;
 import android.os.Handler;
 import android.graphics.Matrix;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Color;
 
-import com.arthenica.mobileffmpeg.FFmpeg;
+// FFmpeg removed - convert raw videos on PC instead
+// import com.arthenica.ffmpegkit.FFmpegKit;
+// import com.arthenica.ffmpegkit.ReturnCode;
 
 public class MainActivity extends Activity {
 	static {
@@ -79,11 +84,18 @@ public class MainActivity extends Activity {
     private Uri fileUri;
     private OutputStream outputStream;
 	private String rawVideoFilename = "invalid";
+	private int centerPixelRaw = 0;
+	private TextView temperatureText;
 
 
 	public Bitmap bitmapARGBFromByte(byte[] data){
 		int[] pixels = new int[kFrameWidth * kFrameHeight];
 		final int kNumPixels = kFrameWidth * kFrameHeight;
+
+		// Center pixel index (128, 96) in 256x192 frame
+		final int centerX = kFrameWidth / 2;
+		final int centerY = kFrameHeight / 2;
+		final int centerIndex = centerY * kFrameWidth + centerX;
 
 		float min = 1; float max = 0;
 		for (int i = 0; i < kNumPixels; i++) {
@@ -94,6 +106,10 @@ public class MainActivity extends Activity {
 			if (val_float > max) max = val_float;
 		}
 
+		// Extract raw center pixel value before normalization
+		int centerOffset = 2 * centerIndex;
+		centerPixelRaw = (data[centerOffset] & 0xFF) | ((data[centerOffset + 1] & 0xFF) << 8);
+
 		for (int i = 0; i < kNumPixels; i++) {
 			int offset = 2 * i; // 2 bytes per uint16_t
 			int val_uint16_t = (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8);
@@ -101,11 +117,6 @@ public class MainActivity extends Activity {
 			float val_float = (val_uint16_t / 65535.0f - min) / (max - min);
 			assert val_float >= 0.0f && val_float <= 1.0f;
 			val_uint16_t = (int) (val_float * 65535.0f);
-
-
-			if (i == 10000) {
-				Log.d("ThermalCamera", i + ", " + LUT[i % 65536] + ", " + String.format("0x%08X", LUT[i % 65536]));
-			}
 
 			pixels[i] = LUT[val_uint16_t]; // Lookup the ARGB value from LUT
 		}
@@ -177,17 +188,9 @@ public class MainActivity extends Activity {
 		}
 	}
 
+	// FFmpeg removed from app - convert raw videos on PC using python/commands.sh
 	public void ConvertRawToMp4(String inputFilePath, String outputFilePath) {
-		File lutFile = new File(getExternalFilesDir(null), kLutFileName);
-		String cmd = String.format(
-				"-y -f rawvideo -pixel_format gray16le -video_size 256x192 -framerate 25 -i %s -vf \"normalize=blackpt=black:whitept=white, lut3d=%s\" %s",
-				inputFilePath, lutFile.getAbsolutePath(), outputFilePath);
-
-		int rc = FFmpeg.execute(cmd);
-		if (rc != 0) {
-			Toast.makeText(this, "Conversion failed", Toast.LENGTH_SHORT).show();
-			Log.e("ThermalCamera", "FFmpeg conversion failed with exit code: " + rc);
-		}
+		Log.i("ThermalCamera", "Raw video saved. Convert on PC with: ffmpeg -f rawvideo -pixel_format gray16le -video_size 256x192 -framerate 25 -i input.bin output.mp4");
 	}
 
 	public void startRecording(View view) {
@@ -263,9 +266,37 @@ public class MainActivity extends Activity {
 				matrix.postRotate(90);
 				matrix.postScale(scale,scale);
 				bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, false);
+
+				// Draw crosshair on mutable copy
+				Bitmap mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
+				Canvas canvas = new Canvas(mutableBitmap);
+				Paint paint = new Paint();
+				paint.setColor(Color.WHITE);
+				paint.setStrokeWidth(2 * scale);
+				paint.setStyle(Paint.Style.STROKE);
+
+				int centerX = mutableBitmap.getWidth() / 2;
+				int centerY = mutableBitmap.getHeight() / 2;
+				int crosshairSize = (int)(20 * scale);
+
+				// Draw crosshair lines
+				canvas.drawLine(centerX - crosshairSize, centerY, centerX + crosshairSize, centerY, paint);
+				canvas.drawLine(centerX, centerY - crosshairSize, centerX, centerY + crosshairSize, paint);
+
+				// Draw center circle
+				canvas.drawCircle(centerX, centerY, crosshairSize / 2, paint);
+
 				ImageView imageView = findViewById(R.id.imageView);
-				imageView.setImageBitmap(bitmap);
-				MaybeEncodeFrame(last_frame) ;
+				imageView.setImageBitmap(mutableBitmap);
+
+				// Update temperature display (convert raw to Celsius)
+				// Infiray P2Pro: raw 16-bit value maps to -40°C to 170°C range
+				if (temperatureText != null) {
+					float tempCelsius = (centerPixelRaw / 65536.0f) * 210.0f - 40.0f;
+					temperatureText.setText(String.format("%.1f°C", tempCelsius));
+				}
+
+				MaybeEncodeFrame(last_frame);
 			}
         }
     };
@@ -328,6 +359,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 		setContentView(R.layout.activity_main);
+		temperatureText = findViewById(R.id.temperatureText);
 		PendingIntent permissionIntent = PendingIntent.getBroadcast(this, 0, new Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 		if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
 			!= PackageManager.PERMISSION_GRANTED) {

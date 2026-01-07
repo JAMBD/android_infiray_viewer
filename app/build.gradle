@@ -32,6 +32,6 @@ android {
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.2.0'
-    implementation 'com.arthenica:mobile-ffmpeg-min:4.4.LTS'
+    // FFmpeg removed - use python/commands.sh to convert raw videos on PC
 }
 
