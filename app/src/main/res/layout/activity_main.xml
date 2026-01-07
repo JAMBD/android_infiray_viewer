@@ -3,27 +3,80 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:gravity="center"
-	android:keepScreenOn="true"
-	android:background="@color/background">
-	<ImageView
-		android:id="@+id/imageView"
-		android:layout_width="384dp"
-        android:layout_height="512dp" />
-    <Button
-        android:id="@+id/getImageButton"
-        android:layout_width="wrap_content"
+    android:keepScreenOn="true"
+    android:background="@color/background">
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <ImageView
+            android:id="@+id/imageView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <TextView
+            android:id="@+id/temperatureText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top|start"
+            android:layout_margin="16dp"
+            android:padding="8dp"
+            android:background="#80000000"
+            android:textColor="#FFFFFF"
+            android:textSize="24sp"
+            android:fontFamily="monospace"
+            android:text="----" />
+
+    </FrameLayout>
+
+    <!-- First row for Capture Image and Capture Raw buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Capture" />
-    <Button
-        android:id="@+id/getFrameButton"
-        android:layout_width="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <Button
+            android:id="@+id/getImageButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Capture Image" />
+
+        <Button
+            android:id="@+id/getFrameButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Capture Raw" />
+    </LinearLayout>
+
+    <!-- Second row for Start Video and Stop Video buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Capture raw" />
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <Button
+            android:id="@+id/startVideoButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Start Video" />
+
+        <Button
+            android:id="@+id/stopVideoButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Stop Video"
+            android:enabled="false" />
+    </LinearLayout>
+
+    <!-- Additional button for Ctrl, kept separately at the bottom -->
     <Button
         android:id="@+id/ctrlButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Ctrl" />
-
+        android:text="Ctrl"
+        android:layout_gravity="center_horizontal" />
 </LinearLayout>
-

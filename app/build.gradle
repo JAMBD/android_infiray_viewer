@@ -6,7 +6,7 @@ android {
 
     defaultConfig {
         applicationId "info.jnlm.thermal_camera"
-        minSdkVersion 16
+        minSdkVersion 29
         targetSdkVersion 34
         versionCode 1
         versionName "1.0"
@@ -32,5 +32,6 @@ android {
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.2.0'
+    // FFmpeg removed - use python/commands.sh to convert raw videos on PC
 }
 
