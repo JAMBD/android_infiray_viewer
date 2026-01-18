@@ -85,6 +85,9 @@ public class MainActivity extends Activity {
     private OutputStream outputStream;
 	private String rawVideoFilename = "invalid";
 	private int centerPixelRaw = 0;
+	private int minPixelRaw = 0, maxPixelRaw = 0;
+	private int minPixelX = 0, minPixelY = 0;
+	private int maxPixelX = 0, maxPixelY = 0;
 	private TextView temperatureText;
 
 	private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
@@ -142,10 +145,28 @@ public class MainActivity extends Activity {
 			if (val_float > max) max = val_float;
 		}
 
-		// Extract raw center pixel value from second half of frame (where calibrated thermal data lives)
+		// Extract values from second half of frame (where calibrated thermal data lives)
 		int secondHalfOffset = kFrameWidth * kFrameHeight * kPixelSize;
 		int centerOffset = secondHalfOffset + 2 * centerIndex;
 		centerPixelRaw = (data[centerOffset] & 0xFF) | ((data[centerOffset + 1] & 0xFF) << 8);
+
+		// Find min/max in calibrated thermal data
+		minPixelRaw = Integer.MAX_VALUE;
+		maxPixelRaw = Integer.MIN_VALUE;
+		for (int i = 0; i < kNumPixels; i++) {
+			int offset = secondHalfOffset + 2 * i;
+			int val = (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8);
+			if (val < minPixelRaw) {
+				minPixelRaw = val;
+				minPixelX = i % kFrameWidth;
+				minPixelY = i / kFrameWidth;
+			}
+			if (val > maxPixelRaw) {
+				maxPixelRaw = val;
+				maxPixelX = i % kFrameWidth;
+				maxPixelY = i / kFrameWidth;
+			}
+		}
 
 		// Handle edge case where all pixels have same value (e.g. during camera init)
 		float range = max - min;
@@ -313,7 +334,7 @@ public class MainActivity extends Activity {
 				matrix.postScale(scale,scale);
 				bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, false);
 
-				// Draw crosshair on mutable copy
+				// Draw crosshairs on mutable copy
 				Bitmap mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
 				Canvas canvas = new Canvas(mutableBitmap);
 				Paint paint = new Paint();
@@ -324,13 +345,37 @@ public class MainActivity extends Activity {
 				int centerX = mutableBitmap.getWidth() / 2;
 				int centerY = mutableBitmap.getHeight() / 2;
 				int crosshairSize = (int)(20 * scale);
+				int miniCrosshairSize = (int)(8 * scale);
 
-				// Draw crosshair lines
+				// Draw center crosshair
 				canvas.drawLine(centerX - crosshairSize, centerY, centerX + crosshairSize, centerY, paint);
 				canvas.drawLine(centerX, centerY - crosshairSize, centerX, centerY + crosshairSize, paint);
-
-				// Draw center circle
 				canvas.drawCircle(centerX, centerY, crosshairSize / 2, paint);
+
+				// Transform original coords to rotated/scaled coords: (origX, origY) -> ((191-origY)*scale, origX*scale)
+				int minScreenX = (int)((191 - minPixelY) * scale);
+				int minScreenY = (int)(minPixelX * scale);
+				int maxScreenX = (int)((191 - maxPixelY) * scale);
+				int maxScreenY = (int)(maxPixelX * scale);
+
+				// Draw black outlines first for contrast
+				paint.setColor(Color.BLACK);
+				paint.setStrokeWidth(4 * scale);
+				canvas.drawLine(minScreenX - miniCrosshairSize, minScreenY, minScreenX + miniCrosshairSize, minScreenY, paint);
+				canvas.drawLine(minScreenX, minScreenY - miniCrosshairSize, minScreenX, minScreenY + miniCrosshairSize, paint);
+				canvas.drawLine(maxScreenX - miniCrosshairSize, maxScreenY, maxScreenX + miniCrosshairSize, maxScreenY, paint);
+				canvas.drawLine(maxScreenX, maxScreenY - miniCrosshairSize, maxScreenX, maxScreenY + miniCrosshairSize, paint);
+
+				// Draw min crosshair (blue) on top
+				paint.setStrokeWidth(2 * scale);
+				paint.setColor(Color.CYAN);
+				canvas.drawLine(minScreenX - miniCrosshairSize, minScreenY, minScreenX + miniCrosshairSize, minScreenY, paint);
+				canvas.drawLine(minScreenX, minScreenY - miniCrosshairSize, minScreenX, minScreenY + miniCrosshairSize, paint);
+
+				// Draw max crosshair (yellow) on top
+				paint.setColor(Color.YELLOW);
+				canvas.drawLine(maxScreenX - miniCrosshairSize, maxScreenY, maxScreenX + miniCrosshairSize, maxScreenY, paint);
+				canvas.drawLine(maxScreenX, maxScreenY - miniCrosshairSize, maxScreenX, maxScreenY + miniCrosshairSize, paint);
 
 				ImageView imageView = findViewById(R.id.imageView);
 				imageView.setImageBitmap(mutableBitmap);
@@ -338,8 +383,11 @@ public class MainActivity extends Activity {
 				// Update temperature display (convert raw to Celsius)
 				// Empirically derived from temperature references: 0°C = 16708 raw, 37°C = 19812 raw
 				if (temperatureText != null) {
-					float tempCelsius = (centerPixelRaw - 16708) * (37.0f / (19812 - 16708));
-					temperatureText.setText(String.format("%.1f°C", tempCelsius));
+					final float kSlope = 37.0f / (19812 - 16708);
+					float tempCenter = (centerPixelRaw - 16708) * kSlope;
+					float tempMin = (minPixelRaw - 16708) * kSlope;
+					float tempMax = (maxPixelRaw - 16708) * kSlope;
+					temperatureText.setText(String.format("%.1f°C\nMin: %.1f°C\nMax: %.1f°C", tempCenter, tempMin, tempMax));
 				}
 
 				MaybeEncodeFrame(last_frame);
