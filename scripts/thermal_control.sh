@@ -8,7 +8,7 @@ PACKAGE="info.jnlm.thermal_camera"
 ACTIVITY=".MainActivity"
 
 case "$1" in
-    capture_image|capture_raw|start_video|stop_video|cycle_color|status)
+    capture_image|capture_raw|start_video|stop_video|cycle_color|status|toggle_center_crosshair|toggle_minmax)
         adb shell am start -n "${PACKAGE}/${ACTIVITY}" --es action "$1"
         ;;
     pull_latest_image)
@@ -46,16 +46,18 @@ case "$1" in
         echo "Usage: $0 <command>"
         echo ""
         echo "Commands:"
-        echo "  capture_image     - Capture PNG image"
-        echo "  capture_raw       - Capture raw binary data"
-        echo "  start_video       - Start video recording"
-        echo "  stop_video        - Stop video recording"
-        echo "  cycle_color       - Cycle to next colormap"
-        echo "  status            - Log current app status (view with: adb logcat -d | grep STATUS)"
+        echo "  capture_image          - Capture PNG image"
+        echo "  capture_raw            - Capture raw binary data"
+        echo "  start_video            - Start video recording"
+        echo "  stop_video             - Stop video recording"
+        echo "  cycle_color            - Cycle to next colormap"
+        echo "  toggle_center_crosshair - Toggle center crosshair overlay"
+        echo "  toggle_minmax          - Toggle min/max tracking overlay"
+        echo "  status                 - Log current app status (view with: adb logcat -d | grep STATUS)"
         echo ""
-        echo "  pull_latest_image - Pull most recent PNG to /tmp/"
-        echo "  pull_latest_video - Pull most recent MP4 to /tmp/"
-        echo "  pull_latest_raw   - Pull most recent .bin to /tmp/"
+        echo "  pull_latest_image      - Pull most recent PNG to /tmp/"
+        echo "  pull_latest_video      - Pull most recent MP4 to /tmp/"
+        echo "  pull_latest_raw        - Pull most recent .bin to /tmp/"
         exit 1
         ;;
 esac

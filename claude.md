@@ -98,6 +98,8 @@ The app can be controlled via ADB intents, enabling AI/automation to trigger act
 | `start_video` | Start MP4 recording |
 | `stop_video` | Stop recording |
 | `cycle_color` | Cycle to next colormap |
+| `toggle_center_crosshair` | Toggle center crosshair overlay |
+| `toggle_minmax` | Toggle min/max tracking overlay |
 | `status` | Log current state (view with `adb logcat -d \| grep STATUS`) |
 | `pull_latest_image` | Pull most recent PNG to /tmp/ |
 | `pull_latest_video` | Pull most recent MP4 to /tmp/ |

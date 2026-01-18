@@ -1,8 +1,11 @@
 package info.jnlm.thermal_camera;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.os.Bundle;
 import android.Manifest;
+import android.widget.CheckBox;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Button;
 import android.view.View;
@@ -83,6 +86,10 @@ public class MainActivity extends Activity {
 	private boolean isRecording = false;
 	private String videoFilename = "invalid";
 	private int centerPixelRaw = 0;
+
+	// Overlay settings
+	private boolean showCenterCrosshair = true;
+	private boolean showMinMaxOverlay = true;
 
 	// Video encoding
 	private static final int VIDEO_WIDTH = 192;  // Rotated dimensions
@@ -524,34 +531,39 @@ public class MainActivity extends Activity {
 			int miniCrosshairSize = (int)(8 * scale);
 
 			// Draw center crosshair
-			canvas.drawLine(centerX - crosshairSize, centerY, centerX + crosshairSize, centerY, paint);
-			canvas.drawLine(centerX, centerY - crosshairSize, centerX, centerY + crosshairSize, paint);
-			canvas.drawCircle(centerX, centerY, crosshairSize / 2, paint);
+			if (showCenterCrosshair) {
+				canvas.drawLine(centerX - crosshairSize, centerY, centerX + crosshairSize, centerY, paint);
+				canvas.drawLine(centerX, centerY - crosshairSize, centerX, centerY + crosshairSize, paint);
+				canvas.drawCircle(centerX, centerY, crosshairSize / 2, paint);
+			}
 
-			// Transform original coords to rotated/scaled coords: (origX, origY) -> ((191-origY)*scale, origX*scale)
-			int minScreenX = (int)((191 - minPixelY) * scale);
-			int minScreenY = (int)(minPixelX * scale);
-			int maxScreenX = (int)((191 - maxPixelY) * scale);
-			int maxScreenY = (int)(maxPixelX * scale);
+			// Draw min/max crosshairs
+			if (showMinMaxOverlay) {
+				// Transform original coords to rotated/scaled coords: (origX, origY) -> ((191-origY)*scale, origX*scale)
+				int minScreenX = (int)((191 - minPixelY) * scale);
+				int minScreenY = (int)(minPixelX * scale);
+				int maxScreenX = (int)((191 - maxPixelY) * scale);
+				int maxScreenY = (int)(maxPixelX * scale);
 
-			// Draw black outlines first for contrast
-			paint.setColor(Color.BLACK);
-			paint.setStrokeWidth(4 * scale);
-			canvas.drawLine(minScreenX - miniCrosshairSize, minScreenY, minScreenX + miniCrosshairSize, minScreenY, paint);
-			canvas.drawLine(minScreenX, minScreenY - miniCrosshairSize, minScreenX, minScreenY + miniCrosshairSize, paint);
-			canvas.drawLine(maxScreenX - miniCrosshairSize, maxScreenY, maxScreenX + miniCrosshairSize, maxScreenY, paint);
-			canvas.drawLine(maxScreenX, maxScreenY - miniCrosshairSize, maxScreenX, maxScreenY + miniCrosshairSize, paint);
+				// Draw black outlines first for contrast
+				paint.setColor(Color.BLACK);
+				paint.setStrokeWidth(4 * scale);
+				canvas.drawLine(minScreenX - miniCrosshairSize, minScreenY, minScreenX + miniCrosshairSize, minScreenY, paint);
+				canvas.drawLine(minScreenX, minScreenY - miniCrosshairSize, minScreenX, minScreenY + miniCrosshairSize, paint);
+				canvas.drawLine(maxScreenX - miniCrosshairSize, maxScreenY, maxScreenX + miniCrosshairSize, maxScreenY, paint);
+				canvas.drawLine(maxScreenX, maxScreenY - miniCrosshairSize, maxScreenX, maxScreenY + miniCrosshairSize, paint);
 
-			// Draw min crosshair (blue) on top
-			paint.setStrokeWidth(2 * scale);
-			paint.setColor(Color.CYAN);
-			canvas.drawLine(minScreenX - miniCrosshairSize, minScreenY, minScreenX + miniCrosshairSize, minScreenY, paint);
-			canvas.drawLine(minScreenX, minScreenY - miniCrosshairSize, minScreenX, minScreenY + miniCrosshairSize, paint);
+				// Draw min crosshair (blue) on top
+				paint.setStrokeWidth(2 * scale);
+				paint.setColor(Color.CYAN);
+				canvas.drawLine(minScreenX - miniCrosshairSize, minScreenY, minScreenX + miniCrosshairSize, minScreenY, paint);
+				canvas.drawLine(minScreenX, minScreenY - miniCrosshairSize, minScreenX, minScreenY + miniCrosshairSize, paint);
 
-			// Draw max crosshair (yellow) on top
-			paint.setColor(Color.YELLOW);
-			canvas.drawLine(maxScreenX - miniCrosshairSize, maxScreenY, maxScreenX + miniCrosshairSize, maxScreenY, paint);
-			canvas.drawLine(maxScreenX, maxScreenY - miniCrosshairSize, maxScreenX, maxScreenY + miniCrosshairSize, paint);
+				// Draw max crosshair (yellow) on top
+				paint.setColor(Color.YELLOW);
+				canvas.drawLine(maxScreenX - miniCrosshairSize, maxScreenY, maxScreenX + miniCrosshairSize, maxScreenY, paint);
+				canvas.drawLine(maxScreenX, maxScreenY - miniCrosshairSize, maxScreenX, maxScreenY + miniCrosshairSize, paint);
+			}
 
 			ImageView imageView = findViewById(R.id.imageView);
 			imageView.setImageBitmap(mutableBitmap);
@@ -590,6 +602,34 @@ public class MainActivity extends Activity {
 			Log.d("ThermalCamera", "onResume: native_stream is 0, trying to connect");
 			connectCamera();
 		}
+	}
+
+	private void showSettingsDialog() {
+		LinearLayout layout = new LinearLayout(this);
+		layout.setOrientation(LinearLayout.VERTICAL);
+		int padding = (int) (16 * getResources().getDisplayMetrics().density);
+		layout.setPadding(padding, padding, padding, padding);
+
+		CheckBox centerCrosshairCheckbox = new CheckBox(this);
+		centerCrosshairCheckbox.setText("Center crosshair");
+		centerCrosshairCheckbox.setChecked(showCenterCrosshair);
+		layout.addView(centerCrosshairCheckbox);
+
+		CheckBox minMaxCheckbox = new CheckBox(this);
+		minMaxCheckbox.setText("Min/Max tracking");
+		minMaxCheckbox.setChecked(showMinMaxOverlay);
+		layout.addView(minMaxCheckbox);
+
+		new AlertDialog.Builder(this)
+			.setTitle("Settings")
+			.setView(layout)
+			.setPositiveButton("OK", (dialog, which) -> {
+				showCenterCrosshair = centerCrosshairCheckbox.isChecked();
+				showMinMaxOverlay = minMaxCheckbox.isChecked();
+				Log.d("ThermalCamera", "Settings updated: centerCrosshair=" + showCenterCrosshair + ", minMax=" + showMinMaxOverlay);
+			})
+			.setNegativeButton("Cancel", null)
+			.show();
 	}
 
 	private void handleControlAction(String action) {
@@ -637,12 +677,22 @@ public class MainActivity extends Activity {
 				sendCtrl(fd, color + 1);
 				color = (color + 1) % 11;
 				break;
+			case "toggle_center_crosshair":
+				showCenterCrosshair = !showCenterCrosshair;
+				Log.i("ThermalCamera", "Center crosshair: " + showCenterCrosshair);
+				break;
+			case "toggle_minmax":
+				showMinMaxOverlay = !showMinMaxOverlay;
+				Log.i("ThermalCamera", "Min/Max overlay: " + showMinMaxOverlay);
+				break;
 			case "status":
 				Log.i("ThermalCamera", "STATUS: isRecording=" + isRecording +
 						", native_stream=" + native_stream +
 						", fd=" + fd +
 						", color=" + color +
-						", hasFrame=" + (last_frame != null));
+						", hasFrame=" + (last_frame != null) +
+						", centerCrosshair=" + showCenterCrosshair +
+						", minMaxOverlay=" + showMinMaxOverlay);
 				break;
 			default:
 				Log.w("ThermalCamera", "Unknown control action: " + action);
@@ -772,6 +822,8 @@ public class MainActivity extends Activity {
 				color = (color + 1) % 11;
 			}
         });
+
+		findViewById(R.id.settingsButton).setOnClickListener(v -> showSettingsDialog());
 
 		findViewById(R.id.startVideoButton).setOnClickListener(new View.OnClickListener() {
 			@Override
