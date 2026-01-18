@@ -267,6 +267,7 @@ public class MainActivity extends Activity {
             handler.postDelayed(this, 50); // Schedule the task to run again in 1 second
 			if (native_stream != 0){
 				last_frame = grabFrame(native_stream);
+				if (last_frame == null) return;
 				Bitmap bitmap = bitmapARGBFromByte(last_frame);
 				Matrix matrix = new Matrix();
 				matrix.postRotate(90);
@@ -398,6 +399,7 @@ public class MainActivity extends Activity {
         frameButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+				if (last_frame == null) return;
 				SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy_MM_dd_HH_mm_ss", Locale.getDefault());
 				Date now = new Date();
 				String dateTimeString = dateFormat.format(now);
@@ -410,11 +412,12 @@ public class MainActivity extends Activity {
         imageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+				if (last_frame == null) return;
 				Bitmap bitmap = bitmapARGBFromByte(last_frame);
 				SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy_MM_dd_HH_mm_ss", Locale.getDefault());
 				Date now = new Date();
 				String dateTimeString = dateFormat.format(now);
-				saveImageToGallery(getApplicationContext(), bitmapARGBFromByte(last_frame), "thermal_camera",  dateTimeString + ".png");
+				saveImageToGallery(getApplicationContext(), bitmap, "thermal_camera",  dateTimeString + ".png");
 			}
         });
 

@@ -13,6 +13,7 @@
         <activity
             android:name=".MainActivity"
 	    	android:label="@string/app_label"
+	    	android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
 	    	android:exported="true">
 			<intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"/>
