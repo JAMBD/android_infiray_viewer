@@ -28,7 +28,7 @@ def generate_colormap_lut_raw(filename):
     out = np.empty((size, 4), dtype=np.uint8)
     out[:, 0] = 255  # A is max
     print(out[:, 1:].shape, (plt.cm.magma(np.linspace(0, 1, size)) * 255).astype(np.uint8).shape)
-    out[:, 1:] = (plt.cm.coolwarm(np.linspace(0, 1, size)) * 255).astype(np.uint8)[:, 0:3]
+    out[:, 1:] = (plt.cm.turbo(np.linspace(0, 1, size)) * 255).astype(np.uint8)[:, 0:3]
     out = np.flip(out, axis=1)
     print(out)
     out.tofile(filename)
