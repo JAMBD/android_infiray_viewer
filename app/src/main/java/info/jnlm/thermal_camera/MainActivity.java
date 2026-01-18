@@ -592,6 +592,63 @@ public class MainActivity extends Activity {
 		}
 	}
 
+	private void handleControlAction(String action) {
+		Log.d("ThermalCamera", "handleControlAction: " + action);
+		switch (action) {
+			case "capture_image":
+				if (last_frame == null) {
+					Log.w("ThermalCamera", "capture_image: no frame available");
+					return;
+				}
+				Bitmap bitmap = bitmapARGBFromByte(last_frame);
+				Matrix matrix = new Matrix();
+				matrix.postRotate(90);
+				bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, false);
+				SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy_MM_dd_HH_mm_ss", Locale.getDefault());
+				Date now = new Date();
+				String dateTimeString = dateFormat.format(now);
+				saveImageToGallery(getApplicationContext(), bitmap, "thermal_camera", dateTimeString + ".png");
+				break;
+			case "capture_raw":
+				if (last_frame == null) {
+					Log.w("ThermalCamera", "capture_raw: no frame available");
+					return;
+				}
+				SimpleDateFormat rawDateFormat = new SimpleDateFormat("yyyy_MM_dd_HH_mm_ss", Locale.getDefault());
+				Date rawNow = new Date();
+				String rawDateTimeString = rawDateFormat.format(rawNow);
+				saveBytesToFileInDownloads(getApplicationContext(), last_frame, "thermal_camera_" + rawDateTimeString + ".bin");
+				break;
+			case "start_video":
+				if (!isRecording) {
+					startRecording(null);
+				} else {
+					Log.d("ThermalCamera", "start_video: already recording");
+				}
+				break;
+			case "stop_video":
+				if (isRecording) {
+					stopRecording(null);
+				} else {
+					Log.d("ThermalCamera", "stop_video: not recording");
+				}
+				break;
+			case "cycle_color":
+				sendCtrl(fd, color + 1);
+				color = (color + 1) % 11;
+				break;
+			case "status":
+				Log.i("ThermalCamera", "STATUS: isRecording=" + isRecording +
+						", native_stream=" + native_stream +
+						", fd=" + fd +
+						", color=" + color +
+						", hasFrame=" + (last_frame != null));
+				break;
+			default:
+				Log.w("ThermalCamera", "Unknown control action: " + action);
+		}
+	}
+
 	@Override
 	protected void onNewIntent(Intent intent) {
 		super.onNewIntent(intent);
@@ -602,6 +659,12 @@ public class MainActivity extends Activity {
 			if (connectCamera()) {
 				Toast.makeText(this, "Camera connected", Toast.LENGTH_SHORT).show();
 			}
+		}
+
+		// Handle control commands from ADB
+		String controlAction = intent.getStringExtra("action");
+		if (controlAction != null) {
+			handleControlAction(controlAction);
 		}
 	}
 

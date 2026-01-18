@@ -77,3 +77,43 @@ Maps 0-65535 to -40°C to 170°C range. May need calibration.
 - Pixel format: 16-bit grayscale (little-endian)
 - Full UVC frame: 256x384 (thermal data in first half)
 - Raw capture size: 196608 bytes (256 * 384 * 2)
+
+---
+
+## ADB Remote Control
+
+The app can be controlled via ADB intents, enabling AI/automation to trigger actions without manual interaction. **Use this capability as a matter of course when developing and testing new features.**
+
+### Helper Script
+```bash
+./scripts/thermal_control.sh <command>
+```
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `capture_image` | Save PNG to Pictures/thermal_camera/ |
+| `capture_raw` | Save raw binary to Downloads/ |
+| `start_video` | Start MP4 recording |
+| `stop_video` | Stop recording |
+| `cycle_color` | Cycle to next colormap |
+| `status` | Log current state (view with `adb logcat -d \| grep STATUS`) |
+| `pull_latest_image` | Pull most recent PNG to /tmp/ |
+| `pull_latest_video` | Pull most recent MP4 to /tmp/ |
+| `pull_latest_raw` | Pull most recent .bin to /tmp/ |
+
+### Direct ADB Usage
+```bash
+adb shell am start -n info.jnlm.thermal_camera/.MainActivity --es action <command>
+```
+
+### Adding New Remote Actions
+
+When adding new features or actions to the app, **always add corresponding ADB remote control support**:
+
+1. Add a new case to `handleControlAction()` in MainActivity.java
+2. Add the command to `scripts/thermal_control.sh`
+3. Update this documentation
+
+This ensures all app functionality can be triggered programmatically for testing and automation.
