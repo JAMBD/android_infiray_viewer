@@ -51,10 +51,10 @@ import android.graphics.Matrix;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Color;
-
-// FFmpeg removed - convert raw videos on PC instead
-// import com.arthenica.ffmpegkit.FFmpegKit;
-// import com.arthenica.ffmpegkit.ReturnCode;
+import android.media.MediaCodec;
+import android.media.MediaCodecInfo;
+import android.media.MediaFormat;
+import android.media.MediaMuxer;
 
 public class MainActivity extends Activity {
 	static {
@@ -81,10 +81,19 @@ public class MainActivity extends Activity {
 	private int fd;
 
 	private boolean isRecording = false;
-    private Uri fileUri;
-    private OutputStream outputStream;
-	private String rawVideoFilename = "invalid";
+	private String videoFilename = "invalid";
 	private int centerPixelRaw = 0;
+
+	// Video encoding
+	private static final int VIDEO_WIDTH = 192;  // Rotated dimensions
+	private static final int VIDEO_HEIGHT = 256;
+	private static final int VIDEO_FRAME_RATE = 25;
+	private static final int VIDEO_BITRATE = 2000000;  // 2 Mbps
+	private MediaCodec mediaCodec;
+	private MediaMuxer mediaMuxer;
+	private int videoTrackIndex = -1;
+	private boolean muxerStarted = false;
+	private long presentationTimeUs = 0;
 	private int minPixelRaw = 0, maxPixelRaw = 0;
 	private int minPixelX = 0, minPixelY = 0;
 	private int maxPixelX = 0, maxPixelY = 0;
@@ -229,16 +238,107 @@ public class MainActivity extends Activity {
 
 	}
 
-	private void MaybeEncodeFrame(byte[] frame) {
-		if (!isRecording || outputStream == null) return;
+	private void encodeFrame(Bitmap bitmap) {
+		if (!isRecording || mediaCodec == null) return;
 
 		try {
-			final int offset = kFrameWidth * kFrameHeight * kPixelSize;
-			assert frame.length == 2 * offset;
-			outputStream.write(frame, offset, frame.length - offset);
-		} catch (IOException e) {
-			e.printStackTrace();
-			Log.d("ThermalCamera", "Error writing frame");
+			// Get input buffer
+			int inputBufferIndex = mediaCodec.dequeueInputBuffer(10000);
+			if (inputBufferIndex < 0) {
+				Log.w("ThermalCamera", "No input buffer available");
+				return;
+			}
+
+			ByteBuffer inputBuffer = mediaCodec.getInputBuffer(inputBufferIndex);
+			if (inputBuffer == null) return;
+
+			// Convert ARGB bitmap to YUV420 (NV12 format)
+			inputBuffer.clear();
+			int[] pixels = new int[VIDEO_WIDTH * VIDEO_HEIGHT];
+			bitmap.getPixels(pixels, 0, VIDEO_WIDTH, 0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
+
+			// Y plane
+			for (int i = 0; i < VIDEO_WIDTH * VIDEO_HEIGHT; i++) {
+				int pixel = pixels[i];
+				int r = (pixel >> 16) & 0xFF;
+				int g = (pixel >> 8) & 0xFF;
+				int b = pixel & 0xFF;
+				int y = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
+				inputBuffer.put((byte) Math.max(0, Math.min(255, y)));
+			}
+
+			// UV plane (NV12: interleaved U and V, subsampled 2x2)
+			for (int j = 0; j < VIDEO_HEIGHT / 2; j++) {
+				for (int i = 0; i < VIDEO_WIDTH / 2; i++) {
+					int pixel = pixels[(j * 2) * VIDEO_WIDTH + (i * 2)];
+					int r = (pixel >> 16) & 0xFF;
+					int g = (pixel >> 8) & 0xFF;
+					int b = pixel & 0xFF;
+					int u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
+					int v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
+					inputBuffer.put((byte) Math.max(0, Math.min(255, u)));
+					inputBuffer.put((byte) Math.max(0, Math.min(255, v)));
+				}
+			}
+
+			// Queue the input buffer
+			mediaCodec.queueInputBuffer(inputBufferIndex, 0, inputBuffer.position(), presentationTimeUs, 0);
+			presentationTimeUs += 1000000L / VIDEO_FRAME_RATE;
+
+			// Drain output buffers
+			drainEncoder(false);
+
+		} catch (Exception e) {
+			Log.e("ThermalCamera", "Error encoding frame", e);
+		}
+	}
+
+	private void drainEncoder(boolean endOfStream) {
+		if (endOfStream) {
+			// Signal EOS by sending an empty buffer with EOS flag
+			int inputBufferIndex = mediaCodec.dequeueInputBuffer(10000);
+			if (inputBufferIndex >= 0) {
+				mediaCodec.queueInputBuffer(inputBufferIndex, 0, 0, presentationTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+			}
+		}
+
+		MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
+		while (true) {
+			int outputBufferIndex = mediaCodec.dequeueOutputBuffer(bufferInfo, 10000);
+
+			if (outputBufferIndex == MediaCodec.INFO_TRY_AGAIN_LATER) {
+				if (!endOfStream) break;
+			} else if (outputBufferIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+				if (muxerStarted) {
+					Log.w("ThermalCamera", "Format changed after muxer started");
+				}
+				MediaFormat newFormat = mediaCodec.getOutputFormat();
+				videoTrackIndex = mediaMuxer.addTrack(newFormat);
+				mediaMuxer.start();
+				muxerStarted = true;
+			} else if (outputBufferIndex >= 0) {
+				ByteBuffer outputBuffer = mediaCodec.getOutputBuffer(outputBufferIndex);
+				if (outputBuffer == null) {
+					Log.e("ThermalCamera", "Output buffer is null");
+					continue;
+				}
+
+				if ((bufferInfo.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+					bufferInfo.size = 0;
+				}
+
+				if (bufferInfo.size > 0 && muxerStarted) {
+					outputBuffer.position(bufferInfo.offset);
+					outputBuffer.limit(bufferInfo.offset + bufferInfo.size);
+					mediaMuxer.writeSampleData(videoTrackIndex, outputBuffer, bufferInfo);
+				}
+
+				mediaCodec.releaseOutputBuffer(outputBufferIndex, false);
+
+				if ((bufferInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+					break;
+				}
+			}
 		}
 	}
 
@@ -292,68 +392,82 @@ public class MainActivity extends Activity {
 		}
 	}
 
-	// FFmpeg removed from app - convert raw videos on PC using python/commands.sh
-	public void ConvertRawToMp4(String inputFilePath, String outputFilePath) {
-		Log.i("ThermalCamera", "Raw video saved. Convert on PC with: ffmpeg -f rawvideo -pixel_format gray16le -video_size 256x192 -framerate 25 -i input.bin output.mp4");
-	}
-
 	public void startRecording(View view) {
-		// prepareLUTFile();
-
 		String fileName = "thermal_camera_"
-				+ new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date()) + ".bin";
-		fileUri = createFileInDownloads(fileName);
-		if (fileUri == null) {
-			Toast.makeText(this, "Failed to create file in downloads", Toast.LENGTH_SHORT).show();
-			return;
-		}
-		try {
-			outputStream = getContentResolver().openOutputStream(fileUri);
-			if (outputStream == null) {
-				Toast.makeText(this, "Cannot open file output stream", Toast.LENGTH_SHORT).show();
-				return;
-			}
-		} catch (FileNotFoundException e) {
-			e.printStackTrace();
-			Toast.makeText(this, "File not found for recording", Toast.LENGTH_SHORT).show();
-			return;
-		}
+				+ new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(new Date()) + ".mp4";
 
-		findViewById(R.id.startVideoButton).setEnabled(false);
-		findViewById(R.id.stopVideoButton).setEnabled(true);
-		rawVideoFilename = fileName;
-		Toast.makeText(this, "Started recording", Toast.LENGTH_SHORT).show();
-		isRecording = true;
+		// Create file in Pictures/thermal_camera directory
+		File outputDir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "thermal_camera");
+		if (!outputDir.exists()) {
+			outputDir.mkdirs();
+		}
+		File outputFile = new File(outputDir, fileName);
+		videoFilename = outputFile.getAbsolutePath();
+
+		try {
+			// Set up MediaCodec for H.264 encoding
+			MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, VIDEO_WIDTH, VIDEO_HEIGHT);
+			format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible);
+			format.setInteger(MediaFormat.KEY_BIT_RATE, VIDEO_BITRATE);
+			format.setInteger(MediaFormat.KEY_FRAME_RATE, VIDEO_FRAME_RATE);
+			format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+
+			mediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+			mediaCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+			mediaCodec.start();
+
+			// Set up MediaMuxer
+			mediaMuxer = new MediaMuxer(videoFilename, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+			videoTrackIndex = -1;
+			muxerStarted = false;
+			presentationTimeUs = 0;
+
+			findViewById(R.id.startVideoButton).setEnabled(false);
+			findViewById(R.id.stopVideoButton).setEnabled(true);
+			Toast.makeText(this, "Started recording", Toast.LENGTH_SHORT).show();
+			isRecording = true;
+
+		} catch (IOException e) {
+			Log.e("ThermalCamera", "Failed to start recording", e);
+			Toast.makeText(this, "Failed to start recording: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+		}
 	}
 
 	public void stopRecording(View view) {
 		isRecording = false;
 
-		if (outputStream != null) {
-			try {
-				outputStream.close();
-			} catch (IOException e) {
-				e.printStackTrace();
-				Toast.makeText(this, "Error closing file output stream", Toast.LENGTH_SHORT).show();
+		try {
+			// Signal end of stream and drain remaining data
+			if (mediaCodec != null) {
+				drainEncoder(true);
+				mediaCodec.stop();
+				mediaCodec.release();
+				mediaCodec = null;
 			}
+
+			if (mediaMuxer != null) {
+				if (muxerStarted) {
+					mediaMuxer.stop();
+				}
+				mediaMuxer.release();
+				mediaMuxer = null;
+			}
+
+			// Make it show up in gallery
+			File file = new File(videoFilename);
+			Intent intent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+			intent.setData(Uri.fromFile(file));
+			this.sendBroadcast(intent);
+
+			Toast.makeText(this, "Video saved: " + videoFilename, Toast.LENGTH_SHORT).show();
+
+		} catch (Exception e) {
+			Log.e("ThermalCamera", "Error stopping recording", e);
+			Toast.makeText(this, "Error stopping recording: " + e.getMessage(), Toast.LENGTH_SHORT).show();
 		}
 
 		findViewById(R.id.startVideoButton).setEnabled(true);
 		findViewById(R.id.stopVideoButton).setEnabled(false);
-
-		// These direct file paths are very poor practice and should not even in fact work after some version of Android. But, they do work.
-		String fileIn =  "/storage/emulated/0/Download/" + rawVideoFilename;
-		// The thermal_camera dir is actually created by saveImageToGallery.
-		String fileOut = "/storage/emulated/0/Pictures/thermal_camera/" + rawVideoFilename.replace(".bin", ".mp4");
-		Log.v("ThermalCamera", "Converting " + fileIn + " to " + fileOut);
-		ConvertRawToMp4(fileIn, fileOut);
-		// Make it show up in google photos straightaway:
-		File file = new File(fileOut);
-		Intent intent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
-		intent.setData(Uri.fromFile(file));
-		this.sendBroadcast(intent);
-
-		Toast.makeText(this, "Stopped recording", Toast.LENGTH_SHORT).show();
 	}
 
 
@@ -381,6 +495,16 @@ public class MainActivity extends Activity {
 			}
 			frameCount++;
 			Bitmap bitmap = bitmapARGBFromByte(last_frame);
+
+			// Create unscaled rotated bitmap for video encoding (192x256)
+			if (isRecording) {
+				Matrix videoMatrix = new Matrix();
+				videoMatrix.postRotate(90);
+				Bitmap videoBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), videoMatrix, false);
+				encodeFrame(videoBitmap);
+			}
+
+			// Create scaled bitmap for display
 			Matrix matrix = new Matrix();
 			matrix.postRotate(90);
 			matrix.postScale(scale,scale);
@@ -442,7 +566,6 @@ public class MainActivity extends Activity {
 				temperatureText.setText(String.format("%.1f°C\nMin: %.1f°C\nMax: %.1f°C", tempCenter, tempMin, tempMax));
 			}
 
-			MaybeEncodeFrame(last_frame);
         }
     };
 
