@@ -18,6 +18,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
@@ -91,11 +92,18 @@ public class MainActivity extends Activity {
 	private boolean showCenterCrosshair = true;
 	private boolean showMinMaxOverlay = true;
 
-	// Video encoding
-	private static final int VIDEO_WIDTH = 192;  // Rotated dimensions
-	private static final int VIDEO_HEIGHT = 256;
+	// Video encoding - raw thermal (low res)
+	private static final int VIDEO_WIDTH_RAW = 192;  // Rotated dimensions
+	private static final int VIDEO_HEIGHT_RAW = 256;
+	private static final int VIDEO_BITRATE_RAW = 2000000;  // 2 Mbps
+	// Video encoding - with overlay (high res, includes banner height)
+	private static final int VIDEO_WIDTH_OVERLAY = 1080;
+	private static final int VIDEO_HEIGHT_OVERLAY = 1504;  // 1440 + ~64 for text banner
+	private static final int VIDEO_BITRATE_OVERLAY = 10000000;  // 10 Mbps
 	private static final int VIDEO_FRAME_RATE = 25;
-	private static final int VIDEO_BITRATE = 2000000;  // 2 Mbps
+	// Current recording settings (set at start of recording)
+	private int currentVideoWidth = VIDEO_WIDTH_RAW;
+	private int currentVideoHeight = VIDEO_HEIGHT_RAW;
 	private MediaCodec mediaCodec;
 	private MediaMuxer mediaMuxer;
 	private int videoTrackIndex = -1;
@@ -116,6 +124,37 @@ public class MainActivity extends Activity {
 	// Overlay in saves setting
 	private boolean includeOverlayInSaves = false;
 	private Bitmap displayBitmapWithOverlays = null;
+
+	// Preferences
+	private static final String PREFS_NAME = "ThermalCameraPrefs";
+
+	private void saveSettings() {
+		SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+		SharedPreferences.Editor editor = prefs.edit();
+		editor.putInt("color", color);
+		editor.putBoolean("showCenterCrosshair", showCenterCrosshair);
+		editor.putBoolean("showMinMaxOverlay", showMinMaxOverlay);
+		editor.putBoolean("showROIOverlay", showROIOverlay);
+		editor.putBoolean("includeOverlayInSaves", includeOverlayInSaves);
+		editor.putInt("roiX1", roiX1);
+		editor.putInt("roiY1", roiY1);
+		editor.putInt("roiX2", roiX2);
+		editor.putInt("roiY2", roiY2);
+		editor.apply();
+	}
+
+	private void loadSettings() {
+		SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+		color = prefs.getInt("color", 1);
+		showCenterCrosshair = prefs.getBoolean("showCenterCrosshair", true);
+		showMinMaxOverlay = prefs.getBoolean("showMinMaxOverlay", true);
+		showROIOverlay = prefs.getBoolean("showROIOverlay", false);
+		includeOverlayInSaves = prefs.getBoolean("includeOverlayInSaves", false);
+		roiX1 = prefs.getInt("roiX1", 64);
+		roiY1 = prefs.getInt("roiY1", 48);
+		roiX2 = prefs.getInt("roiX2", 192);
+		roiY2 = prefs.getInt("roiY2", 144);
+	}
 
 	private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
 		@Override
@@ -185,6 +224,10 @@ public class MainActivity extends Activity {
 				Log.d("ThermalCamera", "initializeStream FAILED - stream is 0");
 			} else {
 				Log.d("ThermalCamera", "initializeStream SUCCESS - stream is " + native_stream);
+				// Apply saved color setting
+				if (color > 0) {
+					sendCtrl(fd, color);
+				}
 			}
 			return native_stream != 0;
 		}
@@ -299,11 +342,11 @@ public class MainActivity extends Activity {
 
 			// Convert ARGB bitmap to YUV420 (NV12 format)
 			inputBuffer.clear();
-			int[] pixels = new int[VIDEO_WIDTH * VIDEO_HEIGHT];
-			bitmap.getPixels(pixels, 0, VIDEO_WIDTH, 0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
+			int[] pixels = new int[currentVideoWidth * currentVideoHeight];
+			bitmap.getPixels(pixels, 0, currentVideoWidth, 0, 0, currentVideoWidth, currentVideoHeight);
 
 			// Y plane
-			for (int i = 0; i < VIDEO_WIDTH * VIDEO_HEIGHT; i++) {
+			for (int i = 0; i < currentVideoWidth * currentVideoHeight; i++) {
 				int pixel = pixels[i];
 				int r = (pixel >> 16) & 0xFF;
 				int g = (pixel >> 8) & 0xFF;
@@ -313,9 +356,9 @@ public class MainActivity extends Activity {
 			}
 
 			// UV plane (NV12: interleaved U and V, subsampled 2x2)
-			for (int j = 0; j < VIDEO_HEIGHT / 2; j++) {
-				for (int i = 0; i < VIDEO_WIDTH / 2; i++) {
-					int pixel = pixels[(j * 2) * VIDEO_WIDTH + (i * 2)];
+			for (int j = 0; j < currentVideoHeight / 2; j++) {
+				for (int i = 0; i < currentVideoWidth / 2; i++) {
+					int pixel = pixels[(j * 2) * currentVideoWidth + (i * 2)];
 					int r = (pixel >> 16) & 0xFF;
 					int g = (pixel >> 8) & 0xFF;
 					int b = pixel & 0xFF;
@@ -450,10 +493,20 @@ public class MainActivity extends Activity {
 		videoFilename = outputFile.getAbsolutePath();
 
 		try {
+			// Set video dimensions and bitrate based on overlay setting
+			if (includeOverlayInSaves) {
+				currentVideoWidth = VIDEO_WIDTH_OVERLAY;
+				currentVideoHeight = VIDEO_HEIGHT_OVERLAY;
+			} else {
+				currentVideoWidth = VIDEO_WIDTH_RAW;
+				currentVideoHeight = VIDEO_HEIGHT_RAW;
+			}
+			int bitrate = includeOverlayInSaves ? VIDEO_BITRATE_OVERLAY : VIDEO_BITRATE_RAW;
+
 			// Set up MediaCodec for H.264 encoding
-			MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, VIDEO_WIDTH, VIDEO_HEIGHT);
+			MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, currentVideoWidth, currentVideoHeight);
 			format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible);
-			format.setInteger(MediaFormat.KEY_BIT_RATE, VIDEO_BITRATE);
+			format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate);
 			format.setInteger(MediaFormat.KEY_FRAME_RATE, VIDEO_FRAME_RATE);
 			format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
 
@@ -547,16 +600,16 @@ public class MainActivity extends Activity {
 			matrix.postScale(scale,scale);
 			bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, false);
 
-			// Draw crosshairs on mutable copy (stored as class variable for saving)
-			displayBitmapWithOverlays = bitmap.copy(Bitmap.Config.ARGB_8888, true);
-			Canvas canvas = new Canvas(displayBitmapWithOverlays);
+			// Draw crosshairs on mutable copy of thermal image
+			Bitmap thermalWithCrosshairs = bitmap.copy(Bitmap.Config.ARGB_8888, true);
+			Canvas canvas = new Canvas(thermalWithCrosshairs);
 			Paint paint = new Paint();
 			paint.setColor(Color.WHITE);
 			paint.setStrokeWidth(2 * scale);
 			paint.setStyle(Paint.Style.STROKE);
 
-			int centerX = displayBitmapWithOverlays.getWidth() / 2;
-			int centerY = displayBitmapWithOverlays.getHeight() / 2;
+			int centerX = thermalWithCrosshairs.getWidth() / 2;
+			int centerY = thermalWithCrosshairs.getHeight() / 2;
 			int crosshairSize = (int)(20 * scale);
 			int miniCrosshairSize = (int)(8 * scale);
 
@@ -664,26 +717,35 @@ public class MainActivity extends Activity {
 				tempText += String.format("  ROI: %.1f-%.1f°C", roiTempMin, roiTempMax);
 			}
 
-			// Draw temperature text banner at top of image
+			// Create composite bitmap with text banner ABOVE thermal image
 			paint.setStyle(Paint.Style.FILL);
 			float textSize = 42 * scale / 5.625f;  // Scale text appropriately
 			paint.setTextSize(textSize);
-			float bannerHeight = textSize * 1.5f;
+			int bannerHeight = (int)(textSize * 1.5f);
 
-			// Draw semi-transparent black banner background
-			paint.setColor(Color.argb(180, 0, 0, 0));
-			canvas.drawRect(0, 0, displayBitmapWithOverlays.getWidth(), bannerHeight, paint);
+			// Create new bitmap: banner height + thermal image height
+			int thermalWidth = thermalWithCrosshairs.getWidth();
+			int thermalHeight = thermalWithCrosshairs.getHeight();
+			displayBitmapWithOverlays = Bitmap.createBitmap(thermalWidth, bannerHeight + thermalHeight, Bitmap.Config.ARGB_8888);
+			Canvas compositeCanvas = new Canvas(displayBitmapWithOverlays);
 
-			// Draw white text
+			// Draw black banner background at top
+			paint.setColor(Color.BLACK);
+			compositeCanvas.drawRect(0, 0, thermalWidth, bannerHeight, paint);
+
+			// Draw white temperature text in banner
 			paint.setColor(Color.WHITE);
-			canvas.drawText(tempText, 10 * scale / 5.625f, textSize * 1.1f, paint);
+			compositeCanvas.drawText(tempText, 10 * scale / 5.625f, textSize * 1.1f, paint);
+
+			// Draw thermal image (with crosshairs) below banner
+			compositeCanvas.drawBitmap(thermalWithCrosshairs, 0, bannerHeight, null);
 
 			// Encode video frame AFTER overlay drawing
 			if (isRecording) {
 				Bitmap videoBitmap;
 				if (includeOverlayInSaves) {
-					// Scale down display bitmap (with overlays) to video resolution
-					videoBitmap = Bitmap.createScaledBitmap(displayBitmapWithOverlays, VIDEO_WIDTH, VIDEO_HEIGHT, true);
+					// Use display bitmap (with overlays) at high resolution
+					videoBitmap = Bitmap.createScaledBitmap(displayBitmapWithOverlays, currentVideoWidth, currentVideoHeight, true);
 				} else {
 					// Raw thermal without overlays
 					Bitmap rawBitmap = bitmapARGBFromByte(last_frame);
@@ -763,6 +825,7 @@ public class MainActivity extends Activity {
 					roiX2 = 192; roiY2 = 144;
 				}
 				includeOverlayInSaves = overlayInSavesCheckbox.isChecked();
+				saveSettings();
 				Log.d("ThermalCamera", "Settings updated: centerCrosshair=" + showCenterCrosshair + ", minMax=" + showMinMaxOverlay + ", roi=" + showROIOverlay + ", overlayInSaves=" + includeOverlayInSaves);
 			})
 			.setNegativeButton("Cancel", null)
@@ -821,13 +884,16 @@ public class MainActivity extends Activity {
 			case "cycle_color":
 				sendCtrl(fd, color + 1);
 				color = (color + 1) % 11;
+				saveSettings();
 				break;
 			case "toggle_center_crosshair":
 				showCenterCrosshair = !showCenterCrosshair;
+				saveSettings();
 				Log.i("ThermalCamera", "Center crosshair: " + showCenterCrosshair);
 				break;
 			case "toggle_minmax":
 				showMinMaxOverlay = !showMinMaxOverlay;
+				saveSettings();
 				Log.i("ThermalCamera", "Min/Max overlay: " + showMinMaxOverlay);
 				break;
 			case "toggle_roi":
@@ -837,10 +903,12 @@ public class MainActivity extends Activity {
 					roiX1 = 64; roiY1 = 48;
 					roiX2 = 192; roiY2 = 144;
 				}
+				saveSettings();
 				Log.i("ThermalCamera", "ROI overlay: " + showROIOverlay);
 				break;
 			case "toggle_overlay_in_saves":
 				includeOverlayInSaves = !includeOverlayInSaves;
+				saveSettings();
 				Log.i("ThermalCamera", "Include overlay in saves: " + includeOverlayInSaves);
 				break;
 			case "status":
@@ -924,6 +992,9 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 		setContentView(R.layout.activity_main);
 
+		// Load saved settings
+		loadSettings();
+
 		// Register USB attach/detach receiver
 		IntentFilter filter = new IntentFilter();
 		filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
@@ -975,6 +1046,7 @@ public class MainActivity extends Activity {
             public void onClick(View view) {
 				sendCtrl(fd, color + 1);
 				color = (color + 1) % 11;
+				saveSettings();
 			}
         });
 
