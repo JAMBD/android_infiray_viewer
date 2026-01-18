@@ -21,7 +21,6 @@
 
 import os
 import subprocess
-import tempfile
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -39,7 +38,8 @@ if result.returncode != 0 or not result.stdout.strip():
 latest_on_device = result.stdout.strip().split("\n")[0]
 print(f"Latest on device: {latest_on_device}")
 
-latest_file = os.path.join(tempfile.gettempdir(), os.path.basename(latest_on_device))
+latest_file = "/tmp/" + os.path.basename(latest_on_device)
+# latest_file = "/tmp/mouth.bin"
 subprocess.run(["adb", "pull", latest_on_device, latest_file], check=True)
 
 print(f"Loading data from: {latest_file}")
@@ -54,16 +54,24 @@ print(f"data stats: {data.min()}, {data.max()}")
 
 # temp = data[-1].astype('float')  # Convert the last frame to float for visualization
 temp = data[-1].astype("float")  # Convert the last frame to float for visualization
-tmin = -40
-tmax = 170  # Temperature range for conversion
-temp = temp / 65536  # Normalize the data to 0-1
-temp = (tmax - tmin) * temp + tmin  # Convert to temperature scale
+# tmin = -40
+# tmax = 170  # Temperature range for conversion
+# temp = temp / 65536  # Normalize the data to 0-1
+# temp = (tmax - tmin) * temp + tmin  # Convert to temperature scale
+
+# 19812 = 37 celcius
+# 16708 = 0 celcius
+slope = (37 - 0) / (19812 - 16708)
+temp = (temp - 16708) * slope
 
 plt.figure()
 plt.imshow(
     temp, interpolation="none", aspect="auto", cmap="viridis"
 )  # Use a colormap that represents temperature
 plt.colorbar()  # Show the color bar
-plt.show()
 
 temp_int = data[-1].astype("float")  # Convert the last frame to float for visualization
+plt.figure()
+plt.imshow(temp_int, interpolation="none", aspect="auto", cmap="viridis")
+plt.colorbar()  # Show the color bar
+plt.show()

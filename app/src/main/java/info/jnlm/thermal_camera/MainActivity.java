@@ -11,8 +11,10 @@ import android.hardware.usb.UsbDeviceConnection;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
@@ -85,6 +87,42 @@ public class MainActivity extends Activity {
 	private int centerPixelRaw = 0;
 	private TextView temperatureText;
 
+	private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
+		@Override
+		public void onReceive(Context context, Intent intent) {
+			String action = intent.getAction();
+			if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
+				native_stream = 0;
+				Toast.makeText(context, "Camera disconnected", Toast.LENGTH_SHORT).show();
+			} else if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action)) {
+				if (connectCamera()) {
+					Toast.makeText(context, "Camera connected", Toast.LENGTH_SHORT).show();
+				}
+			}
+		}
+	};
+
+	private boolean connectCamera() {
+		UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
+		PendingIntent permissionIntent = PendingIntent.getBroadcast(this, 0, new Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+		HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
+		for (UsbDevice device : deviceList.values()) {
+			if (device.getVendorId() != 0x0BDA) continue;
+			if (device.getProductId() != 0x5830) continue;
+
+			if (!usbManager.hasPermission(device)) {
+				usbManager.requestPermission(device, permissionIntent);
+				return false;
+			}
+
+			UsbDeviceConnection usbDeviceConnection = usbManager.openDevice(device);
+			if (usbDeviceConnection == null) return false;
+			fd = usbDeviceConnection.getFileDescriptor();
+			native_stream = initializeStream(fd);
+			return native_stream != 0;
+		}
+		return false;
+	}
 
 	public Bitmap bitmapARGBFromByte(byte[] data){
 		int[] pixels = new int[kFrameWidth * kFrameHeight];
@@ -104,8 +142,9 @@ public class MainActivity extends Activity {
 			if (val_float > max) max = val_float;
 		}
 
-		// Extract raw center pixel value before normalization
-		int centerOffset = 2 * centerIndex;
+		// Extract raw center pixel value from second half of frame (where calibrated thermal data lives)
+		int secondHalfOffset = kFrameWidth * kFrameHeight * kPixelSize;
+		int centerOffset = secondHalfOffset + 2 * centerIndex;
 		centerPixelRaw = (data[centerOffset] & 0xFF) | ((data[centerOffset + 1] & 0xFF) << 8);
 
 		// Handle edge case where all pixels have same value (e.g. during camera init)
@@ -297,9 +336,9 @@ public class MainActivity extends Activity {
 				imageView.setImageBitmap(mutableBitmap);
 
 				// Update temperature display (convert raw to Celsius)
-				// Infiray P2Pro: raw 16-bit value maps to -40°C to 170°C range
+				// Empirically derived from temperature references: 0°C = 16708 raw, 37°C = 19812 raw
 				if (temperatureText != null) {
-					float tempCelsius = (centerPixelRaw / 65536.0f) * 210.0f - 40.0f;
+					float tempCelsius = (centerPixelRaw - 16708) * (37.0f / (19812 - 16708));
 					temperatureText.setText(String.format("%.1f°C", tempCelsius));
 				}
 
@@ -367,31 +406,20 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 		setContentView(R.layout.activity_main);
 		temperatureText = findViewById(R.id.temperatureText);
-		PendingIntent permissionIntent = PendingIntent.getBroadcast(this, 0, new Intent(ACTION_USB_PERMISSION), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+		// Register USB attach/detach receiver
+		IntentFilter filter = new IntentFilter();
+		filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+		filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+		registerReceiver(usbReceiver, filter);
+
 		if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
 			!= PackageManager.PERMISSION_GRANTED) {
 			ActivityCompat.requestPermissions(this,
 				new String[]{Manifest.permission.CAMERA}, 0);
 		}
 
-		UsbManager usbManager = (UsbManager) getSystemService(Context.USB_SERVICE);
-		HashMap<String, UsbDevice> deviceList = usbManager.getDeviceList();
-		for (UsbDevice device : deviceList.values()){
-			Log.v("ThermalCamera", device.getVendorId() + ":" + device.getProductId() + ":" + device.getProductName());
-			if (device.getVendorId() != 0x0BDA){
-				continue;
-			}
-			if (device.getProductId() != 0x5830){
-				continue;
-			}
-			if (!usbManager.hasPermission(device)){
-				usbManager.requestPermission(device, permissionIntent);
-			}
-
-			UsbDeviceConnection usbDeviceConnection = usbManager.openDevice(device);
-			fd = usbDeviceConnection.getFileDescriptor();
-			native_stream = initializeStream(fd);
-		}
+		connectCamera();
 
 
 		Button frameButton = findViewById(R.id.getFrameButton);
@@ -456,6 +484,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+		unregisterReceiver(usbReceiver);
     }
 
 }
