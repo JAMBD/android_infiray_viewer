@@ -11,10 +11,8 @@ import android.hardware.usb.UsbDeviceConnection;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import android.app.PendingIntent;
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
@@ -72,7 +70,7 @@ public class MainActivity extends Activity {
 	private static final int kFrameWidth = 256;
 	private static final int kFrameHeight = 192;
 	private static final int kPixelSize = 2;
-	
+
 	private int[] LUT = new int[65536];
 	private long native_stream = 0;
 	private byte[] last_frame;
@@ -110,12 +108,20 @@ public class MainActivity extends Activity {
 		int centerOffset = 2 * centerIndex;
 		centerPixelRaw = (data[centerOffset] & 0xFF) | ((data[centerOffset + 1] & 0xFF) << 8);
 
+		// Handle edge case where all pixels have same value (e.g. during camera init)
+		float range = max - min;
+		if (range < 0.0001f) {
+			range = 1.0f; // Avoid division by zero
+		}
+
 		for (int i = 0; i < kNumPixels; i++) {
 			int offset = 2 * i; // 2 bytes per uint16_t
 			int val_uint16_t = (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8);
 
-			float val_float = (val_uint16_t / 65535.0f - min) / (max - min);
-			assert val_float >= 0.0f && val_float <= 1.0f;
+			float val_float = (val_uint16_t / 65535.0f - min) / range;
+			// Clamp to valid range in case of floating point edge cases
+			if (val_float < 0.0f) val_float = 0.0f;
+			if (val_float > 1.0f) val_float = 1.0f;
 			val_uint16_t = (int) (val_float * 65535.0f);
 
 			pixels[i] = LUT[val_uint16_t]; // Lookup the ARGB value from LUT
@@ -380,7 +386,7 @@ public class MainActivity extends Activity {
 			if (!usbManager.hasPermission(device)){
 				usbManager.requestPermission(device, permissionIntent);
 			}
-			
+
 			UsbDeviceConnection usbDeviceConnection = usbManager.openDevice(device);
 			fd = usbDeviceConnection.getFileDescriptor();
 			native_stream = initializeStream(fd);

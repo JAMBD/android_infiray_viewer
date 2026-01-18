@@ -1,5 +1,9 @@
 # Claude Code Development Notes
 
+## Debugging Guidelines
+
+After a successful debugging session, **delete incorrect guesses and temporary debugging code** (extra logging, unused variables, dead code paths) to keep the codebase clean. Only keep the actual fix.
+
 ## Project Overview
 
 Android app for viewing Infiray P2Pro thermal camera streams over USB.
