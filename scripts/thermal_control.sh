@@ -1,14 +1,15 @@
 #!/bin/bash
 # Thermal Camera ADB Control Script
 # Usage: ./thermal_control.sh <command>
-# Commands: capture_image, capture_raw, start_video, stop_video, cycle_color, status,
+# Commands: capture_image, capture_raw, start_video, stop_video, cycle_color,
+#           toggle_center_crosshair, toggle_minmax, toggle_roi, status,
 #           pull_latest_image, pull_latest_video, pull_latest_raw
 
 PACKAGE="info.jnlm.thermal_camera"
 ACTIVITY=".MainActivity"
 
 case "$1" in
-    capture_image|capture_raw|start_video|stop_video|cycle_color|status|toggle_center_crosshair|toggle_minmax)
+    capture_image|capture_raw|start_video|stop_video|cycle_color|status|toggle_center_crosshair|toggle_minmax|toggle_roi)
         adb shell am start -n "${PACKAGE}/${ACTIVITY}" --es action "$1"
         ;;
     pull_latest_image)
@@ -53,6 +54,7 @@ case "$1" in
         echo "  cycle_color            - Cycle to next colormap"
         echo "  toggle_center_crosshair - Toggle center crosshair overlay"
         echo "  toggle_minmax          - Toggle min/max tracking overlay"
+        echo "  toggle_roi             - Toggle ROI (region of interest) tracking"
         echo "  status                 - Log current app status (view with: adb logcat -d | grep STATUS)"
         echo ""
         echo "  pull_latest_image      - Pull most recent PNG to /tmp/"

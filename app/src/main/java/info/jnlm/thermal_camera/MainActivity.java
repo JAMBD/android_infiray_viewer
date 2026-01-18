@@ -8,6 +8,7 @@ import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Button;
+import android.view.MotionEvent;
 import android.view.View;
 import android.content.pm.PackageManager;
 import android.hardware.usb.UsbDeviceConnection;
@@ -105,6 +106,14 @@ public class MainActivity extends Activity {
 	private int minPixelX = 0, minPixelY = 0;
 	private int maxPixelX = 0, maxPixelY = 0;
 	private TextView temperatureText;
+
+	// ROI settings
+	private boolean showROIOverlay = false;
+	private int roiX1 = 64, roiY1 = 48;   // Top-left in frame coords (default: center quarter)
+	private int roiX2 = 192, roiY2 = 144; // Bottom-right in frame coords
+	private int roiMinPixelRaw = 0, roiMaxPixelRaw = 0;
+	private int roiMinPixelX = 0, roiMinPixelY = 0;
+	private int roiMaxPixelX = 0, roiMaxPixelY = 0;
 
 	private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
 		@Override
@@ -219,6 +228,33 @@ public class MainActivity extends Activity {
 				maxPixelRaw = val;
 				maxPixelX = i % kFrameWidth;
 				maxPixelY = i / kFrameWidth;
+			}
+		}
+
+		// Calculate ROI min/max if enabled
+		if (showROIOverlay) {
+			int rx1 = Math.min(roiX1, roiX2), rx2 = Math.max(roiX1, roiX2);
+			int ry1 = Math.min(roiY1, roiY2), ry2 = Math.max(roiY1, roiY2);
+
+			roiMinPixelRaw = Integer.MAX_VALUE;
+			roiMaxPixelRaw = Integer.MIN_VALUE;
+
+			for (int y = ry1; y <= ry2; y++) {
+				for (int x = rx1; x <= rx2; x++) {
+					int i = y * kFrameWidth + x;
+					int offset = secondHalfOffset + 2 * i;
+					int val = (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8);
+					if (val < roiMinPixelRaw) {
+						roiMinPixelRaw = val;
+						roiMinPixelX = x;
+						roiMinPixelY = y;
+					}
+					if (val > roiMaxPixelRaw) {
+						roiMaxPixelRaw = val;
+						roiMaxPixelX = x;
+						roiMaxPixelY = y;
+					}
+				}
 			}
 		}
 
@@ -565,6 +601,61 @@ public class MainActivity extends Activity {
 				canvas.drawLine(maxScreenX, maxScreenY - miniCrosshairSize, maxScreenX, maxScreenY + miniCrosshairSize, paint);
 			}
 
+			// Draw ROI rectangle and crosshairs
+			if (showROIOverlay) {
+				// Normalize ROI bounds
+				int rx1 = Math.min(roiX1, roiX2), rx2 = Math.max(roiX1, roiX2);
+				int ry1 = Math.min(roiY1, roiY2), ry2 = Math.max(roiY1, roiY2);
+
+				// Convert to screen coords (with rotation)
+				int screenLeft = (int)((191 - ry2) * scale);
+				int screenTop = (int)(rx1 * scale);
+				int screenRight = (int)((191 - ry1) * scale);
+				int screenBottom = (int)(rx2 * scale);
+
+				// Draw rectangle outline (black outer, white inner for contrast)
+				paint.setStyle(Paint.Style.STROKE);
+				paint.setColor(Color.BLACK);
+				paint.setStrokeWidth(2 * scale);
+				canvas.drawRect(screenLeft, screenTop, screenRight, screenBottom, paint);
+				paint.setColor(Color.WHITE);
+				paint.setStrokeWidth(1 * scale);
+				canvas.drawRect(screenLeft, screenTop, screenRight, screenBottom, paint);
+
+				// Draw ROI min/max crosshairs with black outlines for contrast
+				int roiMinScreenX = (int)((191 - roiMinPixelY) * scale);
+				int roiMinScreenY = (int)(roiMinPixelX * scale);
+				int roiMaxScreenX = (int)((191 - roiMaxPixelY) * scale);
+				int roiMaxScreenY = (int)(roiMaxPixelX * scale);
+
+				// Black outlines first
+				paint.setColor(Color.BLACK);
+				paint.setStrokeWidth(3 * scale);
+				canvas.drawLine(roiMinScreenX - miniCrosshairSize, roiMinScreenY,
+								roiMinScreenX + miniCrosshairSize, roiMinScreenY, paint);
+				canvas.drawLine(roiMinScreenX, roiMinScreenY - miniCrosshairSize,
+								roiMinScreenX, roiMinScreenY + miniCrosshairSize, paint);
+				canvas.drawLine(roiMaxScreenX - miniCrosshairSize, roiMaxScreenY,
+								roiMaxScreenX + miniCrosshairSize, roiMaxScreenY, paint);
+				canvas.drawLine(roiMaxScreenX, roiMaxScreenY - miniCrosshairSize,
+								roiMaxScreenX, roiMaxScreenY + miniCrosshairSize, paint);
+
+				// ROI min crosshair (magenta)
+				paint.setStrokeWidth(1 * scale);
+				paint.setColor(Color.MAGENTA);
+				canvas.drawLine(roiMinScreenX - miniCrosshairSize, roiMinScreenY,
+								roiMinScreenX + miniCrosshairSize, roiMinScreenY, paint);
+				canvas.drawLine(roiMinScreenX, roiMinScreenY - miniCrosshairSize,
+								roiMinScreenX, roiMinScreenY + miniCrosshairSize, paint);
+
+				// ROI max crosshair (white)
+				paint.setColor(Color.WHITE);
+				canvas.drawLine(roiMaxScreenX - miniCrosshairSize, roiMaxScreenY,
+								roiMaxScreenX + miniCrosshairSize, roiMaxScreenY, paint);
+				canvas.drawLine(roiMaxScreenX, roiMaxScreenY - miniCrosshairSize,
+								roiMaxScreenX, roiMaxScreenY + miniCrosshairSize, paint);
+			}
+
 			ImageView imageView = findViewById(R.id.imageView);
 			imageView.setImageBitmap(mutableBitmap);
 
@@ -575,7 +666,16 @@ public class MainActivity extends Activity {
 				float tempCenter = (centerPixelRaw - 16708) * kSlope;
 				float tempMin = (minPixelRaw - 16708) * kSlope;
 				float tempMax = (maxPixelRaw - 16708) * kSlope;
-				temperatureText.setText(String.format("%.1f°C\nMin: %.1f°C\nMax: %.1f°C", tempCenter, tempMin, tempMax));
+
+				String text = String.format("%.1f°C\nMin: %.1f°C\nMax: %.1f°C", tempCenter, tempMin, tempMax);
+
+				if (showROIOverlay) {
+					float roiTempMin = (roiMinPixelRaw - 16708) * kSlope;
+					float roiTempMax = (roiMaxPixelRaw - 16708) * kSlope;
+					text += String.format("\nROI: %.1f-%.1f°C", roiTempMin, roiTempMax);
+				}
+
+				temperatureText.setText(text);
 			}
 
         }
@@ -620,13 +720,25 @@ public class MainActivity extends Activity {
 		minMaxCheckbox.setChecked(showMinMaxOverlay);
 		layout.addView(minMaxCheckbox);
 
+		CheckBox roiCheckbox = new CheckBox(this);
+		roiCheckbox.setText("ROI tracking");
+		roiCheckbox.setChecked(showROIOverlay);
+		layout.addView(roiCheckbox);
+
 		new AlertDialog.Builder(this)
 			.setTitle("Settings")
 			.setView(layout)
 			.setPositiveButton("OK", (dialog, which) -> {
 				showCenterCrosshair = centerCrosshairCheckbox.isChecked();
 				showMinMaxOverlay = minMaxCheckbox.isChecked();
-				Log.d("ThermalCamera", "Settings updated: centerCrosshair=" + showCenterCrosshair + ", minMax=" + showMinMaxOverlay);
+				boolean wasROIEnabled = showROIOverlay;
+				showROIOverlay = roiCheckbox.isChecked();
+				if (showROIOverlay && !wasROIEnabled) {
+					// Initialize ROI to center quarter when first enabled
+					roiX1 = 64; roiY1 = 48;
+					roiX2 = 192; roiY2 = 144;
+				}
+				Log.d("ThermalCamera", "Settings updated: centerCrosshair=" + showCenterCrosshair + ", minMax=" + showMinMaxOverlay + ", roi=" + showROIOverlay);
 			})
 			.setNegativeButton("Cancel", null)
 			.show();
@@ -685,6 +797,15 @@ public class MainActivity extends Activity {
 				showMinMaxOverlay = !showMinMaxOverlay;
 				Log.i("ThermalCamera", "Min/Max overlay: " + showMinMaxOverlay);
 				break;
+			case "toggle_roi":
+				showROIOverlay = !showROIOverlay;
+				if (showROIOverlay) {
+					// Initialize to center quarter
+					roiX1 = 64; roiY1 = 48;
+					roiX2 = 192; roiY2 = 144;
+				}
+				Log.i("ThermalCamera", "ROI overlay: " + showROIOverlay);
+				break;
 			case "status":
 				Log.i("ThermalCamera", "STATUS: isRecording=" + isRecording +
 						", native_stream=" + native_stream +
@@ -692,7 +813,8 @@ public class MainActivity extends Activity {
 						", color=" + color +
 						", hasFrame=" + (last_frame != null) +
 						", centerCrosshair=" + showCenterCrosshair +
-						", minMaxOverlay=" + showMinMaxOverlay);
+						", minMaxOverlay=" + showMinMaxOverlay +
+						", roiOverlay=" + showROIOverlay);
 				break;
 			default:
 				Log.w("ThermalCamera", "Unknown control action: " + action);
@@ -844,6 +966,29 @@ public class MainActivity extends Activity {
 		DisplayMetrics metrics = new DisplayMetrics();
 		windowManager.getDefaultDisplay().getMetrics(metrics);
 		scale = metrics.widthPixels / 192.0f;
+
+		// Touch listener for ROI drawing
+		ImageView imageView = findViewById(R.id.imageView);
+		imageView.setOnTouchListener((v, event) -> {
+			if (!showROIOverlay) return false;
+
+			// Convert screen coords to frame coords
+			int frameX = Math.min(255, Math.max(0, (int)(event.getY() / scale)));
+			int frameY = Math.min(191, Math.max(0, (int)(191 - event.getX() / scale)));
+
+			switch (event.getAction()) {
+				case MotionEvent.ACTION_DOWN:
+					roiX1 = roiX2 = frameX;
+					roiY1 = roiY2 = frameY;
+					break;
+				case MotionEvent.ACTION_MOVE:
+				case MotionEvent.ACTION_UP:
+					roiX2 = frameX;
+					roiY2 = frameY;
+					break;
+			}
+			return true;
+		});
 	}
 
     @Override
