@@ -6,7 +6,6 @@ import android.os.Bundle;
 import android.Manifest;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
-import android.widget.TextView;
 import android.widget.Button;
 import android.view.MotionEvent;
 import android.view.View;
@@ -105,7 +104,6 @@ public class MainActivity extends Activity {
 	private int minPixelRaw = 0, maxPixelRaw = 0;
 	private int minPixelX = 0, minPixelY = 0;
 	private int maxPixelX = 0, maxPixelY = 0;
-	private TextView temperatureText;
 
 	// ROI settings
 	private boolean showROIOverlay = false;
@@ -114,6 +112,10 @@ public class MainActivity extends Activity {
 	private int roiMinPixelRaw = 0, roiMaxPixelRaw = 0;
 	private int roiMinPixelX = 0, roiMinPixelY = 0;
 	private int roiMaxPixelX = 0, roiMaxPixelY = 0;
+
+	// Overlay in saves setting
+	private boolean includeOverlayInSaves = false;
+	private Bitmap displayBitmapWithOverlays = null;
 
 	private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
 		@Override
@@ -539,30 +541,22 @@ public class MainActivity extends Activity {
 			frameCount++;
 			Bitmap bitmap = bitmapARGBFromByte(last_frame);
 
-			// Create unscaled rotated bitmap for video encoding (192x256)
-			if (isRecording) {
-				Matrix videoMatrix = new Matrix();
-				videoMatrix.postRotate(90);
-				Bitmap videoBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), videoMatrix, false);
-				encodeFrame(videoBitmap);
-			}
-
 			// Create scaled bitmap for display
 			Matrix matrix = new Matrix();
 			matrix.postRotate(90);
 			matrix.postScale(scale,scale);
 			bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, false);
 
-			// Draw crosshairs on mutable copy
-			Bitmap mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true);
-			Canvas canvas = new Canvas(mutableBitmap);
+			// Draw crosshairs on mutable copy (stored as class variable for saving)
+			displayBitmapWithOverlays = bitmap.copy(Bitmap.Config.ARGB_8888, true);
+			Canvas canvas = new Canvas(displayBitmapWithOverlays);
 			Paint paint = new Paint();
 			paint.setColor(Color.WHITE);
 			paint.setStrokeWidth(2 * scale);
 			paint.setStyle(Paint.Style.STROKE);
 
-			int centerX = mutableBitmap.getWidth() / 2;
-			int centerY = mutableBitmap.getHeight() / 2;
+			int centerX = displayBitmapWithOverlays.getWidth() / 2;
+			int centerY = displayBitmapWithOverlays.getHeight() / 2;
 			int crosshairSize = (int)(20 * scale);
 			int miniCrosshairSize = (int)(8 * scale);
 
@@ -656,27 +650,52 @@ public class MainActivity extends Activity {
 								roiMaxScreenX, roiMaxScreenY + miniCrosshairSize, paint);
 			}
 
-			ImageView imageView = findViewById(R.id.imageView);
-			imageView.setImageBitmap(mutableBitmap);
-
-			// Update temperature display (convert raw to Celsius)
+			// Calculate temperature values (convert raw to Celsius)
 			// Empirically derived from temperature references: 0°C = 16708 raw, 37°C = 19812 raw
-			if (temperatureText != null) {
-				final float kSlope = 37.0f / (19812 - 16708);
-				float tempCenter = (centerPixelRaw - 16708) * kSlope;
-				float tempMin = (minPixelRaw - 16708) * kSlope;
-				float tempMax = (maxPixelRaw - 16708) * kSlope;
+			final float kSlope = 37.0f / (19812 - 16708);
+			float tempCenter = (centerPixelRaw - 16708) * kSlope;
+			float tempMin = (minPixelRaw - 16708) * kSlope;
+			float tempMax = (maxPixelRaw - 16708) * kSlope;
 
-				String text = String.format("%.1f°C\nMin: %.1f°C\nMax: %.1f°C", tempCenter, tempMin, tempMax);
-
-				if (showROIOverlay) {
-					float roiTempMin = (roiMinPixelRaw - 16708) * kSlope;
-					float roiTempMax = (roiMaxPixelRaw - 16708) * kSlope;
-					text += String.format("\nROI: %.1f-%.1f°C", roiTempMin, roiTempMax);
-				}
-
-				temperatureText.setText(text);
+			String tempText = String.format("%.1f°C  Min: %.1f°C  Max: %.1f°C", tempCenter, tempMin, tempMax);
+			if (showROIOverlay) {
+				float roiTempMin = (roiMinPixelRaw - 16708) * kSlope;
+				float roiTempMax = (roiMaxPixelRaw - 16708) * kSlope;
+				tempText += String.format("  ROI: %.1f-%.1f°C", roiTempMin, roiTempMax);
 			}
+
+			// Draw temperature text banner at top of image
+			paint.setStyle(Paint.Style.FILL);
+			float textSize = 42 * scale / 5.625f;  // Scale text appropriately
+			paint.setTextSize(textSize);
+			float bannerHeight = textSize * 1.5f;
+
+			// Draw semi-transparent black banner background
+			paint.setColor(Color.argb(180, 0, 0, 0));
+			canvas.drawRect(0, 0, displayBitmapWithOverlays.getWidth(), bannerHeight, paint);
+
+			// Draw white text
+			paint.setColor(Color.WHITE);
+			canvas.drawText(tempText, 10 * scale / 5.625f, textSize * 1.1f, paint);
+
+			// Encode video frame AFTER overlay drawing
+			if (isRecording) {
+				Bitmap videoBitmap;
+				if (includeOverlayInSaves) {
+					// Scale down display bitmap (with overlays) to video resolution
+					videoBitmap = Bitmap.createScaledBitmap(displayBitmapWithOverlays, VIDEO_WIDTH, VIDEO_HEIGHT, true);
+				} else {
+					// Raw thermal without overlays
+					Bitmap rawBitmap = bitmapARGBFromByte(last_frame);
+					Matrix videoMatrix = new Matrix();
+					videoMatrix.postRotate(90);
+					videoBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.getWidth(), rawBitmap.getHeight(), videoMatrix, false);
+				}
+				encodeFrame(videoBitmap);
+			}
+
+			ImageView imageView = findViewById(R.id.imageView);
+			imageView.setImageBitmap(displayBitmapWithOverlays);
 
         }
     };
@@ -725,6 +744,11 @@ public class MainActivity extends Activity {
 		roiCheckbox.setChecked(showROIOverlay);
 		layout.addView(roiCheckbox);
 
+		CheckBox overlayInSavesCheckbox = new CheckBox(this);
+		overlayInSavesCheckbox.setText("Include overlay when saving");
+		overlayInSavesCheckbox.setChecked(includeOverlayInSaves);
+		layout.addView(overlayInSavesCheckbox);
+
 		new AlertDialog.Builder(this)
 			.setTitle("Settings")
 			.setView(layout)
@@ -738,28 +762,37 @@ public class MainActivity extends Activity {
 					roiX1 = 64; roiY1 = 48;
 					roiX2 = 192; roiY2 = 144;
 				}
-				Log.d("ThermalCamera", "Settings updated: centerCrosshair=" + showCenterCrosshair + ", minMax=" + showMinMaxOverlay + ", roi=" + showROIOverlay);
+				includeOverlayInSaves = overlayInSavesCheckbox.isChecked();
+				Log.d("ThermalCamera", "Settings updated: centerCrosshair=" + showCenterCrosshair + ", minMax=" + showMinMaxOverlay + ", roi=" + showROIOverlay + ", overlayInSaves=" + includeOverlayInSaves);
 			})
 			.setNegativeButton("Cancel", null)
 			.show();
+	}
+
+	private Bitmap getBitmapForSaving() {
+		if (includeOverlayInSaves && displayBitmapWithOverlays != null) {
+			return displayBitmapWithOverlays;
+		}
+		if (last_frame == null) return null;
+		Bitmap bitmap = bitmapARGBFromByte(last_frame);
+		Matrix matrix = new Matrix();
+		matrix.postRotate(90);
+		return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, false);
 	}
 
 	private void handleControlAction(String action) {
 		Log.d("ThermalCamera", "handleControlAction: " + action);
 		switch (action) {
 			case "capture_image":
-				if (last_frame == null) {
+				Bitmap bitmapToSave = getBitmapForSaving();
+				if (bitmapToSave == null) {
 					Log.w("ThermalCamera", "capture_image: no frame available");
 					return;
 				}
-				Bitmap bitmap = bitmapARGBFromByte(last_frame);
-				Matrix matrix = new Matrix();
-				matrix.postRotate(90);
-				bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, false);
 				SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy_MM_dd_HH_mm_ss", Locale.getDefault());
 				Date now = new Date();
 				String dateTimeString = dateFormat.format(now);
-				saveImageToGallery(getApplicationContext(), bitmap, "thermal_camera", dateTimeString + ".png");
+				saveImageToGallery(getApplicationContext(), bitmapToSave, "thermal_camera", dateTimeString + ".png");
 				break;
 			case "capture_raw":
 				if (last_frame == null) {
@@ -806,6 +839,10 @@ public class MainActivity extends Activity {
 				}
 				Log.i("ThermalCamera", "ROI overlay: " + showROIOverlay);
 				break;
+			case "toggle_overlay_in_saves":
+				includeOverlayInSaves = !includeOverlayInSaves;
+				Log.i("ThermalCamera", "Include overlay in saves: " + includeOverlayInSaves);
+				break;
 			case "status":
 				Log.i("ThermalCamera", "STATUS: isRecording=" + isRecording +
 						", native_stream=" + native_stream +
@@ -814,7 +851,8 @@ public class MainActivity extends Activity {
 						", hasFrame=" + (last_frame != null) +
 						", centerCrosshair=" + showCenterCrosshair +
 						", minMaxOverlay=" + showMinMaxOverlay +
-						", roiOverlay=" + showROIOverlay);
+						", roiOverlay=" + showROIOverlay +
+						", overlayInSaves=" + includeOverlayInSaves);
 				break;
 			default:
 				Log.w("ThermalCamera", "Unknown control action: " + action);
@@ -885,7 +923,6 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 		setContentView(R.layout.activity_main);
-		temperatureText = findViewById(R.id.temperatureText);
 
 		// Register USB attach/detach receiver
 		IntentFilter filter = new IntentFilter();
@@ -921,16 +958,12 @@ public class MainActivity extends Activity {
         imageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-				if (last_frame == null) return;
-				Bitmap bitmap = bitmapARGBFromByte(last_frame);
-				// Rotate 90 degrees clockwise to match display orientation
-				Matrix matrix = new Matrix();
-				matrix.postRotate(90);
-				bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, false);
+				Bitmap bitmapToSave = getBitmapForSaving();
+				if (bitmapToSave == null) return;
 				SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy_MM_dd_HH_mm_ss", Locale.getDefault());
 				Date now = new Date();
 				String dateTimeString = dateFormat.format(now);
-				saveImageToGallery(getApplicationContext(), bitmap, "thermal_camera",  dateTimeString + ".png");
+				saveImageToGallery(getApplicationContext(), bitmapToSave, "thermal_camera", dateTimeString + ".png");
 			}
         });
 
