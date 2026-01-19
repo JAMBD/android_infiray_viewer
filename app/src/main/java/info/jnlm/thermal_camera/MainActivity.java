@@ -704,16 +704,16 @@ public class MainActivity extends Activity {
 			}
 
 			// Calculate temperature values (convert raw to Celsius)
-			// Empirically derived from temperature references: 0°C = 16708 raw, 37°C = 19812 raw
-			final float kSlope = 37.0f / (19812 - 16708);
-			float tempCenter = (centerPixelRaw - 16708) * kSlope;
-			float tempMin = (minPixelRaw - 16708) * kSlope;
-			float tempMax = (maxPixelRaw - 16708) * kSlope;
+			// Empirically derived from temperature references: 0°C = 17516 raw, 37°C = 19812 raw
+			final float kSlope = 37.0f / (19812 - 17516);
+			float tempCenter = (centerPixelRaw - 17516) * kSlope;
+			float tempMin = (minPixelRaw - 17516) * kSlope;
+			float tempMax = (maxPixelRaw - 17516) * kSlope;
 
 			String tempText = String.format("%.1f°C  Min: %.1f°C  Max: %.1f°C", tempCenter, tempMin, tempMax);
 			if (showROIOverlay) {
-				float roiTempMin = (roiMinPixelRaw - 16708) * kSlope;
-				float roiTempMax = (roiMaxPixelRaw - 16708) * kSlope;
+				float roiTempMin = (roiMinPixelRaw - 17516) * kSlope;
+				float roiTempMax = (roiMaxPixelRaw - 17516) * kSlope;
 				tempText += String.format("  ROI: %.1f-%.1f°C", roiTempMin, roiTempMax);
 			}
 
@@ -1002,10 +1002,16 @@ public class MainActivity extends Activity {
 		filter.addAction(ACTION_USB_PERMISSION);
 		registerReceiver(usbReceiver, filter, Context.RECEIVER_EXPORTED);
 
+		// Check both CAMERA and storage permissions
 		if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-			!= PackageManager.PERMISSION_GRANTED) {
+				!= PackageManager.PERMISSION_GRANTED ||
+			ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+				!= PackageManager.PERMISSION_GRANTED) {
 			ActivityCompat.requestPermissions(this,
-				new String[]{Manifest.permission.CAMERA}, 0);
+				new String[]{
+					Manifest.permission.CAMERA,
+					Manifest.permission.WRITE_EXTERNAL_STORAGE
+				}, 0);
 		}
 
 		connectCamera();
