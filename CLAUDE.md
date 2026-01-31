@@ -105,6 +105,9 @@ The app can be controlled via ADB intents, enabling AI/automation to trigger act
 | `set_scale_auto` | Set color scale to auto mode |
 | `set_scale_manual` | Set color scale to manual center ±range mode |
 | `set_manual_range <deg>` | Set manual range in degrees (0.5-20.0) |
+| `set_scale_topbottom` | Set color scale to manual top/bottom mode |
+| `set_manual_top <temp>` | Set top temperature (float param `temp`, -40.0 to 170.0) |
+| `set_manual_bottom <temp>` | Set bottom temperature (float param `temp`, -40.0 to 170.0) |
 | `status` | Log current state (view with `adb logcat -d \| grep STATUS`) |
 | `pull_latest_image` | Pull most recent PNG to /tmp/ |
 | `pull_latest_video` | Pull most recent MP4 to /tmp/ |
@@ -119,6 +122,10 @@ adb shell am start -n info.jnlm.thermal_camera/.MainActivity --es action <comman
 ```bash
 # For set_manual_range which needs a float parameter:
 adb shell am start -n info.jnlm.thermal_camera/.MainActivity --es action set_manual_range --ef range 5.0
+
+# For set_manual_top/set_manual_bottom which need a float temp parameter:
+adb shell am start -n info.jnlm.thermal_camera/.MainActivity --es action set_manual_top --ef temp 50.0
+adb shell am start -n info.jnlm.thermal_camera/.MainActivity --es action set_manual_bottom --ef temp 10.0
 ```
 
 ### Adding New Remote Actions

@@ -60,6 +60,73 @@
 
         </LinearLayout>
 
+        <LinearLayout
+            android:id="@+id/manualTopBottomOverlay"
+            android:layout_width="48dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="end"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:background="#40000000">
+
+            <EditText
+                android:id="@+id/topTempLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="40.0"
+                android:textColor="#FFFF4444"
+                android:textSize="10sp"
+                android:padding="4dp"
+                android:gravity="center"
+                android:inputType="numberDecimal|numberSigned"
+                android:background="@android:color/transparent"
+                android:imeOptions="actionDone"
+                android:selectAllOnFocus="true"
+                android:singleLine="true" />
+
+            <FrameLayout
+                android:id="@+id/topBottomSeekBarContainer"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <SeekBar
+                    android:id="@+id/bottomTempSeekBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_gravity="center"
+                    android:rotation="270"
+                    android:max="2100"
+                    android:progress="600" />
+
+                <SeekBar
+                    android:id="@+id/topTempSeekBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_gravity="center"
+                    android:rotation="270"
+                    android:max="2100"
+                    android:progress="800" />
+
+            </FrameLayout>
+
+            <EditText
+                android:id="@+id/bottomTempLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="20.0"
+                android:textColor="#FF4488FF"
+                android:textSize="10sp"
+                android:padding="4dp"
+                android:gravity="center"
+                android:inputType="numberDecimal|numberSigned"
+                android:background="@android:color/transparent"
+                android:imeOptions="actionDone"
+                android:selectAllOnFocus="true"
+                android:singleLine="true" />
+
+        </LinearLayout>
+
     </FrameLayout>
 
     <!-- First row for Capture Image and Capture Raw buttons -->

@@ -7,6 +7,7 @@ import android.Manifest;
 import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.Button;
 import android.widget.SeekBar;
@@ -92,9 +93,11 @@ public class MainActivity extends Activity {
 	private String videoFilename = "invalid";
 	private int centerPixelRaw = 0;
 
-	// Color scale mode: 0=Auto, 1=Manual Center ±Range
+	// Color scale mode: 0=Auto, 1=Manual Center ±Range, 2=Manual Top/Bottom
 	private int colorScaleMode = 0;
 	private float manualRangeDegrees = 2.0f;
+	private float manualTopDegrees = 40.0f;
+	private float manualBottomDegrees = 20.0f;
 
 	// Overlay settings
 	private boolean showCenterCrosshair = true;
@@ -158,6 +161,8 @@ public class MainActivity extends Activity {
 		editor.putInt("roiY2", roiY2);
 		editor.putInt("colorScaleMode", colorScaleMode);
 		editor.putFloat("manualRangeDegrees", manualRangeDegrees);
+		editor.putFloat("manualTopDegrees", manualTopDegrees);
+		editor.putFloat("manualBottomDegrees", manualBottomDegrees);
 		editor.apply();
 	}
 
@@ -174,6 +179,8 @@ public class MainActivity extends Activity {
 		roiY2 = prefs.getInt("roiY2", 144);
 		colorScaleMode = prefs.getInt("colorScaleMode", 0);
 		manualRangeDegrees = prefs.getFloat("manualRangeDegrees", 2.0f);
+		manualTopDegrees = prefs.getFloat("manualTopDegrees", 40.0f);
+		manualBottomDegrees = prefs.getFloat("manualBottomDegrees", 20.0f);
 	}
 
 	private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
@@ -340,6 +347,26 @@ public class MainActivity extends Activity {
 					float delta = manualRangeDegrees / degreesPerUnit;
 					min = centerVal / 65535.0f - delta;
 					max = centerVal / 65535.0f + delta;
+				}
+			}
+		} else if (colorScaleMode == 2) {
+			// Manual Top/Bottom mode: map color palette to absolute temperature range
+			final float kSlopeInv = (19812 - 17516) / 37.0f;  // raw units per degree
+			float autoRange = max - min;
+			if (autoRange > 0.0001f) {
+				float tempRange = ((maxPixelRaw - minPixelRaw) * 37.0f / (19812 - 17516));
+				float degreesPerUnit = tempRange / autoRange;
+				if (Math.abs(degreesPerUnit) > 0.0001f) {
+					int bottomRaw = (int)(manualBottomDegrees * kSlopeInv + 17516);
+					int topRaw = (int)(manualTopDegrees * kSlopeInv + 17516);
+					// Convert raw calibrated values to first-half-of-frame normalized space
+					// Find relationship between first-half values and calibrated values
+					int centerFirstHalf = (data[2 * centerIndex] & 0xFF) | ((data[2 * centerIndex + 1] & 0xFF) << 8);
+					float centerCalibDeg = (centerPixelRaw - 17516) * 37.0f / (19812 - 17516);
+					float bottomDelta = (manualBottomDegrees - centerCalibDeg) / degreesPerUnit;
+					float topDelta = (manualTopDegrees - centerCalibDeg) / degreesPerUnit;
+					min = centerFirstHalf / 65535.0f + bottomDelta;
+					max = centerFirstHalf / 65535.0f + topDelta;
 				}
 			}
 		}
@@ -792,6 +819,19 @@ public class MainActivity extends Activity {
 	private static final float RANGE_MAX = 170.0f;
 	private static final int RANGE_SEEKBAR_MAX = 1000;
 
+	// Linear SeekBar mapping for absolute temperature (mode 2)
+	private static final float TEMP_ABS_MIN = -40.0f;
+	private static final float TEMP_ABS_MAX = 170.0f;
+	private static final int TEMP_SEEKBAR_MAX = 2100;  // 0.1° resolution
+
+	private float tempSeekBarToDegrees(int progress) {
+		return TEMP_ABS_MIN + (TEMP_ABS_MAX - TEMP_ABS_MIN) * progress / (float) TEMP_SEEKBAR_MAX;
+	}
+
+	private int degreesToTempSeekBar(float degrees) {
+		return Math.round((degrees - TEMP_ABS_MIN) / (TEMP_ABS_MAX - TEMP_ABS_MIN) * TEMP_SEEKBAR_MAX);
+	}
+
 	private float seekBarToDegrees(int progress) {
 		float t = progress / (float) RANGE_SEEKBAR_MAX;
 		return RANGE_MIN + (RANGE_MAX - RANGE_MIN) * t * t;
@@ -802,10 +842,43 @@ public class MainActivity extends Activity {
 		return Math.round(t * RANGE_SEEKBAR_MAX);
 	}
 
+	private void initTopBottomFromCurrentImage() {
+		final float kSlope = 37.0f / (19812 - 17516);
+		if (maxPixelRaw > minPixelRaw) {
+			manualBottomDegrees = (minPixelRaw - 17516) * kSlope;
+			manualTopDegrees = (maxPixelRaw - 17516) * kSlope;
+		} else {
+			manualBottomDegrees = 20.0f;
+			manualTopDegrees = 40.0f;
+		}
+		// Clamp
+		manualBottomDegrees = Math.max(TEMP_ABS_MIN, Math.min(TEMP_ABS_MAX, manualBottomDegrees));
+		manualTopDegrees = Math.max(TEMP_ABS_MIN, Math.min(TEMP_ABS_MAX, manualTopDegrees));
+		if (manualTopDegrees - manualBottomDegrees < 0.5f) {
+			manualTopDegrees = manualBottomDegrees + 0.5f;
+		}
+		updateTopBottomUI();
+	}
+
+	private void updateTopBottomUI() {
+		SeekBar topSeekBar = findViewById(R.id.topTempSeekBar);
+		SeekBar bottomSeekBar = findViewById(R.id.bottomTempSeekBar);
+		EditText topLabel = findViewById(R.id.topTempLabel);
+		EditText bottomLabel = findViewById(R.id.bottomTempLabel);
+		if (topSeekBar != null) topSeekBar.setProgress(degreesToTempSeekBar(manualTopDegrees));
+		if (bottomSeekBar != null) bottomSeekBar.setProgress(degreesToTempSeekBar(manualBottomDegrees));
+		if (topLabel != null) topLabel.setText(String.format("%.1f", manualTopDegrees));
+		if (bottomLabel != null) bottomLabel.setText(String.format("%.1f", manualBottomDegrees));
+	}
+
 	private void updateRangeOverlayVisibility() {
 		View overlay = findViewById(R.id.manualRangeOverlay);
 		if (overlay != null) {
 			overlay.setVisibility(colorScaleMode == 1 ? View.VISIBLE : View.GONE);
+		}
+		View topBottomOverlay = findViewById(R.id.manualTopBottomOverlay);
+		if (topBottomOverlay != null) {
+			topBottomOverlay.setVisibility(colorScaleMode == 2 ? View.VISIBLE : View.GONE);
 		}
 	}
 
@@ -823,7 +896,7 @@ public class MainActivity extends Activity {
 		Spinner scaleSpinner = new Spinner(this);
 		ArrayAdapter<String> scaleAdapter = new ArrayAdapter<>(this,
 			android.R.layout.simple_spinner_item,
-			new String[]{"Auto", "Center ±Range"});
+			new String[]{"Auto", "Center ±Range", "Manual Top/Bottom"});
 		scaleAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
 		scaleSpinner.setAdapter(scaleAdapter);
 		scaleSpinner.setSelection(colorScaleMode);
@@ -853,7 +926,11 @@ public class MainActivity extends Activity {
 			.setTitle("Settings")
 			.setView(layout)
 			.setPositiveButton("OK", (dialog, which) -> {
-				colorScaleMode = scaleSpinner.getSelectedItemPosition();
+				int newMode = scaleSpinner.getSelectedItemPosition();
+				if (newMode == 2 && colorScaleMode != 2) {
+					initTopBottomFromCurrentImage();
+				}
+				colorScaleMode = newMode;
 				showCenterCrosshair = centerCrosshairCheckbox.isChecked();
 				showMinMaxOverlay = minMaxCheckbox.isChecked();
 				boolean wasROIEnabled = showROIOverlay;
@@ -963,6 +1040,13 @@ public class MainActivity extends Activity {
 				saveSettings();
 				Log.i("ThermalCamera", "Color scale mode: Manual Center ±" + manualRangeDegrees + "°C");
 				break;
+			case "set_scale_topbottom":
+				colorScaleMode = 2;
+				initTopBottomFromCurrentImage();
+				updateRangeOverlayVisibility();
+				saveSettings();
+				Log.i("ThermalCamera", "Color scale mode: Manual Top/Bottom " + manualBottomDegrees + "-" + manualTopDegrees + "°C");
+				break;
 			case "status":
 				Log.i("ThermalCamera", "STATUS: isRecording=" + isRecording +
 						", native_stream=" + native_stream +
@@ -974,7 +1058,9 @@ public class MainActivity extends Activity {
 						", roiOverlay=" + showROIOverlay +
 						", overlayInSaves=" + includeOverlayInSaves +
 						", colorScaleMode=" + colorScaleMode +
-						", manualRangeDegrees=" + manualRangeDegrees);
+						", manualRangeDegrees=" + manualRangeDegrees +
+						", manualTopDegrees=" + manualTopDegrees +
+						", manualBottomDegrees=" + manualBottomDegrees);
 				break;
 			default:
 				Log.w("ThermalCamera", "Unknown control action: " + action);
@@ -1012,6 +1098,26 @@ public class MainActivity extends Activity {
 					Log.i("ThermalCamera", "Manual range set to ±" + manualRangeDegrees + "°C");
 				} else {
 					Log.w("ThermalCamera", "Invalid range value: " + range + " (must be 0.5-170.0)");
+				}
+			} else if (controlAction.equals("set_manual_top")) {
+				float temp = intent.getFloatExtra("temp", Float.NaN);
+				if (!Float.isNaN(temp) && temp >= TEMP_ABS_MIN && temp <= TEMP_ABS_MAX) {
+					manualTopDegrees = Math.max(temp, manualBottomDegrees + 0.5f);
+					updateTopBottomUI();
+					saveSettings();
+					Log.i("ThermalCamera", "Manual top set to " + manualTopDegrees + "°C");
+				} else {
+					Log.w("ThermalCamera", "Invalid temp value: " + temp);
+				}
+			} else if (controlAction.equals("set_manual_bottom")) {
+				float temp = intent.getFloatExtra("temp", Float.NaN);
+				if (!Float.isNaN(temp) && temp >= TEMP_ABS_MIN && temp <= TEMP_ABS_MAX) {
+					manualBottomDegrees = Math.min(temp, manualTopDegrees - 0.5f);
+					updateTopBottomUI();
+					saveSettings();
+					Log.i("ThermalCamera", "Manual bottom set to " + manualBottomDegrees + "°C");
+				} else {
+					Log.w("ThermalCamera", "Invalid temp value: " + temp);
 				}
 			} else {
 				handleControlAction(controlAction);
@@ -1151,11 +1257,14 @@ public class MainActivity extends Activity {
 		if (thumb != null) thumb.setColorFilter(0xFFFF00FF, PorterDuff.Mode.SRC_IN);
 		rangeSeekBar.getProgressDrawable().setColorFilter(0xFFFF00FF, PorterDuff.Mode.SRC_IN);
 
-		// Size the rotated SeekBar width to its container height so the track spans the full extent
+		// IMPORTANT: Use addOnLayoutChangeListener (not post()) to size rotated SeekBars.
+		// post() only runs once at startup — if the overlay is GONE at that time, the container
+		// height is 0 and the SeekBar gets width=0 permanently. The layout listener re-fires
+		// whenever the overlay becomes visible again, keeping the SeekBar correctly sized.
 		View seekBarContainer = findViewById(R.id.seekBarContainer);
-		seekBarContainer.post(() -> {
-			int h = seekBarContainer.getHeight();
-			if (h > 0) {
+		seekBarContainer.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+			int h = bottom - top;
+			if (h > 0 && rangeSeekBar.getLayoutParams().width != h) {
 				ViewGroup.LayoutParams lp = rangeSeekBar.getLayoutParams();
 				lp.width = h;
 				rangeSeekBar.setLayoutParams(lp);
@@ -1209,6 +1318,180 @@ public class MainActivity extends Activity {
 				applyRangeFromLabel.run();
 			}
 		});
+
+		// Set up Manual Top/Bottom SeekBars (mode 2)
+		SeekBar topTempSeekBar = findViewById(R.id.topTempSeekBar);
+		SeekBar bottomTempSeekBar = findViewById(R.id.bottomTempSeekBar);
+		EditText topTempLabel = findViewById(R.id.topTempLabel);
+		EditText bottomTempLabel = findViewById(R.id.bottomTempLabel);
+
+		// Red thumb for top
+		Drawable topThumb = topTempSeekBar.getThumb();
+		if (topThumb != null) topThumb.setColorFilter(0xFFFF4444, PorterDuff.Mode.SRC_IN);
+		// Transparent track for top (it overlaps bottom)
+		topTempSeekBar.getProgressDrawable().setAlpha(0);
+
+		// Blue thumb for bottom
+		Drawable bottomThumb = bottomTempSeekBar.getThumb();
+		if (bottomThumb != null) bottomThumb.setColorFilter(0xFF4488FF, PorterDuff.Mode.SRC_IN);
+		bottomTempSeekBar.getProgressDrawable().setColorFilter(0xFF4488FF, PorterDuff.Mode.SRC_IN);
+
+		// IMPORTANT: Use addOnLayoutChangeListener (not post()) — see comment above on seekBarContainer.
+		View topBottomContainer = findViewById(R.id.topBottomSeekBarContainer);
+		topBottomContainer.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+			int h = bottom - top;
+			if (h > 0) {
+				if (topTempSeekBar.getLayoutParams().width != h) {
+					ViewGroup.LayoutParams lp1 = topTempSeekBar.getLayoutParams();
+					lp1.width = h;
+					topTempSeekBar.setLayoutParams(lp1);
+				}
+				if (bottomTempSeekBar.getLayoutParams().width != h) {
+					ViewGroup.LayoutParams lp2 = bottomTempSeekBar.getLayoutParams();
+					lp2.width = h;
+					bottomTempSeekBar.setLayoutParams(lp2);
+				}
+			}
+		});
+
+		topTempSeekBar.setMax(TEMP_SEEKBAR_MAX);
+		bottomTempSeekBar.setMax(TEMP_SEEKBAR_MAX);
+		topTempSeekBar.setProgress(degreesToTempSeekBar(manualTopDegrees));
+		bottomTempSeekBar.setProgress(degreesToTempSeekBar(manualBottomDegrees));
+		topTempLabel.setText(String.format("%.1f", manualTopDegrees));
+		bottomTempLabel.setText(String.format("%.1f", manualBottomDegrees));
+
+		topTempSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+			@Override
+			public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+				float deg = tempSeekBarToDegrees(progress);
+				// Clamp: top can't go below bottom + 0.5
+				float minAllowed = manualBottomDegrees + 0.5f;
+				if (deg < minAllowed) {
+					deg = minAllowed;
+					seekBar.setProgress(degreesToTempSeekBar(deg));
+				}
+				manualTopDegrees = deg;
+				topTempLabel.setText(String.format("%.1f", manualTopDegrees));
+			}
+			@Override public void onStartTrackingTouch(SeekBar seekBar) {}
+			@Override public void onStopTrackingTouch(SeekBar seekBar) { saveSettings(); }
+		});
+
+		bottomTempSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+			@Override
+			public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+				float deg = tempSeekBarToDegrees(progress);
+				// Clamp: bottom can't go above top - 0.5
+				float maxAllowed = manualTopDegrees - 0.5f;
+				if (deg > maxAllowed) {
+					deg = maxAllowed;
+					seekBar.setProgress(degreesToTempSeekBar(deg));
+				}
+				manualBottomDegrees = deg;
+				bottomTempLabel.setText(String.format("%.1f", manualBottomDegrees));
+			}
+			@Override public void onStartTrackingTouch(SeekBar seekBar) {}
+			@Override public void onStopTrackingTouch(SeekBar seekBar) { saveSettings(); }
+		});
+
+		// Touch dispatch: route touches to nearest SeekBar thumb.
+		// IMPORTANT: A ViewGroup's OnTouchListener does NOT fire when a child consumes the
+		// event. Android dispatches to children (topmost Z-order first) before the parent.
+		// Since topTempSeekBar is on top, it always steals touches — even ones meant for the
+		// bottom SeekBar. Fix: add a transparent View on top of both SeekBars to intercept
+		// ALL touches, then set progress directly on the appropriate SeekBar.
+		View touchInterceptor = new View(this);
+		touchInterceptor.setLayoutParams(new FrameLayout.LayoutParams(
+			FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+		((FrameLayout) topBottomContainer).addView(touchInterceptor);
+
+		final SeekBar[] activeSeekBar = {null};
+		touchInterceptor.setOnTouchListener((v, event) -> {
+			float y = event.getY();
+			float containerHeight = v.getHeight();
+			if (containerHeight <= 0) return false;
+			// 270° rotation: progress increases from bottom to top
+			int touchProgress = (int)(TEMP_SEEKBAR_MAX * (1.0f - y / containerHeight));
+			touchProgress = Math.max(0, Math.min(TEMP_SEEKBAR_MAX, touchProgress));
+
+			switch (event.getAction()) {
+				case MotionEvent.ACTION_DOWN:
+					// Pick the closer thumb on initial touch
+					int distToTop = Math.abs(touchProgress - topTempSeekBar.getProgress());
+					int distToBottom = Math.abs(touchProgress - bottomTempSeekBar.getProgress());
+					activeSeekBar[0] = (distToTop <= distToBottom) ? topTempSeekBar : bottomTempSeekBar;
+					activeSeekBar[0].setProgress(touchProgress);
+					break;
+				case MotionEvent.ACTION_MOVE:
+					if (activeSeekBar[0] != null) {
+						activeSeekBar[0].setProgress(touchProgress);
+					}
+					break;
+				case MotionEvent.ACTION_UP:
+				case MotionEvent.ACTION_CANCEL:
+					if (activeSeekBar[0] != null) {
+						activeSeekBar[0].setProgress(touchProgress);
+						saveSettings();
+						activeSeekBar[0] = null;
+					}
+					break;
+			}
+			return true;
+		});
+
+		// EditText apply for top temp
+		Runnable applyTopFromLabel = () -> {
+			try {
+				String text = topTempLabel.getText().toString().replace("°C", "").trim();
+				float val = Float.parseFloat(text);
+				val = Math.max(TEMP_ABS_MIN, Math.min(TEMP_ABS_MAX, val));
+				val = Math.max(manualBottomDegrees + 0.5f, val);
+				manualTopDegrees = val;
+				topTempSeekBar.setProgress(degreesToTempSeekBar(val));
+				saveSettings();
+			} catch (NumberFormatException e) { }
+			topTempLabel.setText(String.format("%.1f", manualTopDegrees));
+		};
+
+		topTempLabel.setOnEditorActionListener((v, actionId, event) -> {
+			if (actionId == EditorInfo.IME_ACTION_DONE || (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER)) {
+				applyTopFromLabel.run();
+				topTempLabel.clearFocus();
+				return true;
+			}
+			return false;
+		});
+		topTempLabel.setOnFocusChangeListener((v, hasFocus) -> {
+			if (!hasFocus) applyTopFromLabel.run();
+		});
+
+		// EditText apply for bottom temp
+		Runnable applyBottomFromLabel = () -> {
+			try {
+				String text = bottomTempLabel.getText().toString().replace("°C", "").trim();
+				float val = Float.parseFloat(text);
+				val = Math.max(TEMP_ABS_MIN, Math.min(TEMP_ABS_MAX, val));
+				val = Math.min(manualTopDegrees - 0.5f, val);
+				manualBottomDegrees = val;
+				bottomTempSeekBar.setProgress(degreesToTempSeekBar(val));
+				saveSettings();
+			} catch (NumberFormatException e) { }
+			bottomTempLabel.setText(String.format("%.1f", manualBottomDegrees));
+		};
+
+		bottomTempLabel.setOnEditorActionListener((v, actionId, event) -> {
+			if (actionId == EditorInfo.IME_ACTION_DONE || (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER)) {
+				applyBottomFromLabel.run();
+				bottomTempLabel.clearFocus();
+				return true;
+			}
+			return false;
+		});
+		bottomTempLabel.setOnFocusChangeListener((v, hasFocus) -> {
+			if (!hasFocus) applyBottomFromLabel.run();
+		});
+
 		updateRangeOverlayVisibility();
 
 		WindowManager windowManager = (WindowManager) this.getSystemService(Context.WINDOW_SERVICE);

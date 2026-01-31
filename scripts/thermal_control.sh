@@ -3,13 +3,15 @@
 # Usage: ./thermal_control.sh <command>
 # Commands: capture_image, capture_raw, start_video, stop_video, cycle_color,
 #           toggle_center_crosshair, toggle_minmax, toggle_roi, toggle_overlay_in_saves,
+#           set_scale_auto, set_scale_manual, set_manual_range, set_scale_topbottom,
+#           set_manual_top, set_manual_bottom,
 #           status, pull_latest_image, pull_latest_video, pull_latest_raw
 
 PACKAGE="info.jnlm.thermal_camera"
 ACTIVITY=".MainActivity"
 
 case "$1" in
-    capture_image|capture_raw|start_video|stop_video|cycle_color|status|toggle_center_crosshair|toggle_minmax|toggle_roi|toggle_overlay_in_saves|set_scale_auto|set_scale_manual)
+    capture_image|capture_raw|start_video|stop_video|cycle_color|status|toggle_center_crosshair|toggle_minmax|toggle_roi|toggle_overlay_in_saves|set_scale_auto|set_scale_manual|set_scale_topbottom)
         adb shell am start -n "${PACKAGE}/${ACTIVITY}" --es action "$1"
         ;;
     set_manual_range)
@@ -19,6 +21,22 @@ case "$1" in
             exit 1
         fi
         adb shell am start -n "${PACKAGE}/${ACTIVITY}" --es action set_manual_range --ef range "$2"
+        ;;
+    set_manual_top)
+        if [ -z "$2" ]; then
+            echo "Usage: $0 set_manual_top <temp>"
+            echo "  temp: -40.0 to 170.0"
+            exit 1
+        fi
+        adb shell am start -n "${PACKAGE}/${ACTIVITY}" --es action set_manual_top --ef temp "$2"
+        ;;
+    set_manual_bottom)
+        if [ -z "$2" ]; then
+            echo "Usage: $0 set_manual_bottom <temp>"
+            echo "  temp: -40.0 to 170.0"
+            exit 1
+        fi
+        adb shell am start -n "${PACKAGE}/${ACTIVITY}" --es action set_manual_bottom --ef temp "$2"
         ;;
     pull_latest_image)
         latest=$(adb shell ls -t /sdcard/Pictures/thermal_camera/*.png 2>/dev/null | head -1 | tr -d '\r')
@@ -67,6 +85,9 @@ case "$1" in
         echo "  set_scale_auto         - Set color scale to auto mode"
         echo "  set_scale_manual       - Set color scale to manual center ±range mode"
         echo "  set_manual_range <deg> - Set manual range in degrees (0.5-20.0)"
+        echo "  set_scale_topbottom    - Set color scale to manual top/bottom mode"
+        echo "  set_manual_top <temp>  - Set top temperature (-40.0 to 170.0)"
+        echo "  set_manual_bottom <temp> - Set bottom temperature (-40.0 to 170.0)"
         echo "  status                 - Log current app status (view with: adb logcat -d | grep STATUS)"
         echo ""
         echo "  pull_latest_image      - Pull most recent PNG to /tmp/"
