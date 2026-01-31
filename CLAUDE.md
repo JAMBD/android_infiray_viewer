@@ -62,12 +62,12 @@ adb logcat -s ThermalCamera:* AndroidRuntime:E
 
 ## Temperature Conversion
 
-Raw 16-bit value to Celsius (from analyze_raw.py):
+Raw 16-bit value to Celsius (calibrated second-half values):
 ```
-temp_celsius = (raw / 65536.0) * 210.0 - 40.0
+temp_celsius = raw / 64.0 - 273.15
 ```
 
-Maps 0-65535 to -40°C to 170°C range. May need calibration.
+Works for both high gain (narrow range) and low gain (wide range, up to ~400°C).
 
 ---
 
@@ -106,8 +106,11 @@ The app can be controlled via ADB intents, enabling AI/automation to trigger act
 | `set_scale_manual` | Set color scale to manual center ±range mode |
 | `set_manual_range <deg>` | Set manual range in degrees (0.5-20.0) |
 | `set_scale_topbottom` | Set color scale to manual top/bottom mode |
-| `set_manual_top <temp>` | Set top temperature (float param `temp`, -40.0 to 170.0) |
-| `set_manual_bottom <temp>` | Set bottom temperature (float param `temp`, -40.0 to 170.0) |
+| `set_manual_top <temp>` | Set top temperature (float param `temp`, -40.0 to 400.0) |
+| `set_manual_bottom <temp>` | Set bottom temperature (float param `temp`, -40.0 to 400.0) |
+| `toggle_gain` | Toggle between high/low gain mode |
+| `set_gain_low` | Set low gain (wide range, up to ~400°C) |
+| `set_gain_high` | Set high gain (narrow range, more detail) |
 | `status` | Log current state (view with `adb logcat -d \| grep STATUS`) |
 | `pull_latest_image` | Pull most recent PNG to /tmp/ |
 | `pull_latest_video` | Pull most recent MP4 to /tmp/ |

@@ -96,7 +96,7 @@
                     android:layout_height="48dp"
                     android:layout_gravity="center"
                     android:rotation="270"
-                    android:max="2100"
+                    android:max="4400"
                     android:progress="600" />
 
                 <SeekBar
@@ -105,7 +105,7 @@
                     android:layout_height="48dp"
                     android:layout_gravity="center"
                     android:rotation="270"
-                    android:max="2100"
+                    android:max="4400"
                     android:progress="800" />
 
             </FrameLayout>
@@ -178,10 +178,10 @@
         android:gravity="center">
 
         <Button
-            android:id="@+id/ctrlButton"
+            android:id="@+id/gainButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Ctrl" />
+            android:text="High" />
 
         <Button
             android:id="@+id/settingsButton"

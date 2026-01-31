@@ -75,6 +75,9 @@ public class MainActivity extends Activity {
     public native long initializeStream(int fd);
     public native byte[] grabFrame(long stream);
     public native void sendCtrl(int fd, int color);
+    public native int setGainMode(int fd, int gain);
+    public native int getGainMode(int fd);
+    public native int triggerShutter(int fd);
 
 	private static final String ACTION_USB_PERMISSION =
             "info.jnlm.thermal_camera.USB_PERMISSION";
@@ -140,6 +143,10 @@ public class MainActivity extends Activity {
 	private int roiMinPixelX = 0, roiMinPixelY = 0;
 	private int roiMaxPixelX = 0, roiMaxPixelY = 0;
 
+	// Gain mode: false=high gain (narrow range, default), true=low gain (wide range)
+	private boolean isLowGain = false;
+	private boolean isSwitchingGain = false;
+
 	// Overlay in saves setting
 	private boolean includeOverlayInSaves = false;
 	private Bitmap displayBitmapWithOverlays = null;
@@ -163,6 +170,7 @@ public class MainActivity extends Activity {
 		editor.putFloat("manualRangeDegrees", manualRangeDegrees);
 		editor.putFloat("manualTopDegrees", manualTopDegrees);
 		editor.putFloat("manualBottomDegrees", manualBottomDegrees);
+		editor.putBoolean("isLowGain", isLowGain);
 		editor.apply();
 	}
 
@@ -181,6 +189,7 @@ public class MainActivity extends Activity {
 		manualRangeDegrees = prefs.getFloat("manualRangeDegrees", 2.0f);
 		manualTopDegrees = prefs.getFloat("manualTopDegrees", 40.0f);
 		manualBottomDegrees = prefs.getFloat("manualBottomDegrees", 20.0f);
+		isLowGain = prefs.getBoolean("isLowGain", false);
 	}
 
 	private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
@@ -255,6 +264,16 @@ public class MainActivity extends Activity {
 				if (color > 0) {
 					sendCtrl(fd, color);
 				}
+				// Trigger shutter (NUC) and restore gain mode on background thread
+				final int connFd = fd;
+				new Thread(() -> {
+					Log.d("ThermalCamera", "Triggering shutter on connect...");
+					triggerShutter(connFd);
+					if (isLowGain) {
+						Log.d("ThermalCamera", "Restoring low gain mode...");
+						setGainMode(connFd, 0);
+					}
+				}).start();
 			}
 			return native_stream != 0;
 		}
@@ -337,10 +356,10 @@ public class MainActivity extends Activity {
 
 		// In manual mode, map color palette to ±manualRangeDegrees around center pixel
 		if (colorScaleMode == 1) {
-			final float kSlope = 37.0f / (19812 - 17516);
 			float autoRange = max - min;
 			if (autoRange > 0.0001f) {
-				float tempRange = ((maxPixelRaw - minPixelRaw) * kSlope);
+				// Temperature uses raw/64-273.15, so 1 degree = 64 raw units in calibrated half
+				float tempRange = (maxPixelRaw - minPixelRaw) / 64.0f;
 				float degreesPerUnit = tempRange / autoRange;
 				if (Math.abs(degreesPerUnit) > 0.0001f) {
 					int centerVal = (data[2 * centerIndex] & 0xFF) | ((data[2 * centerIndex + 1] & 0xFF) << 8);
@@ -351,18 +370,13 @@ public class MainActivity extends Activity {
 			}
 		} else if (colorScaleMode == 2) {
 			// Manual Top/Bottom mode: map color palette to absolute temperature range
-			final float kSlopeInv = (19812 - 17516) / 37.0f;  // raw units per degree
 			float autoRange = max - min;
 			if (autoRange > 0.0001f) {
-				float tempRange = ((maxPixelRaw - minPixelRaw) * 37.0f / (19812 - 17516));
+				float tempRange = (maxPixelRaw - minPixelRaw) / 64.0f;
 				float degreesPerUnit = tempRange / autoRange;
 				if (Math.abs(degreesPerUnit) > 0.0001f) {
-					int bottomRaw = (int)(manualBottomDegrees * kSlopeInv + 17516);
-					int topRaw = (int)(manualTopDegrees * kSlopeInv + 17516);
-					// Convert raw calibrated values to first-half-of-frame normalized space
-					// Find relationship between first-half values and calibrated values
 					int centerFirstHalf = (data[2 * centerIndex] & 0xFF) | ((data[2 * centerIndex + 1] & 0xFF) << 8);
-					float centerCalibDeg = (centerPixelRaw - 17516) * 37.0f / (19812 - 17516);
+					float centerCalibDeg = centerPixelRaw / 64.0f - 273.15f;
 					float bottomDelta = (manualBottomDegrees - centerCalibDeg) / degreesPerUnit;
 					float topDelta = (manualTopDegrees - centerCalibDeg) / degreesPerUnit;
 					min = centerFirstHalf / 65535.0f + bottomDelta;
@@ -713,16 +727,15 @@ public class MainActivity extends Activity {
 			}
 
 			// Calculate temperature values (convert raw to Celsius)
-			// Empirically derived from temperature references: 0°C = 17516 raw, 37°C = 19812 raw
-			final float kSlope = 37.0f / (19812 - 17516);
-			float tempCenter = (centerPixelRaw - 17516) * kSlope;
-			float tempMin = (minPixelRaw - 17516) * kSlope;
-			float tempMax = (maxPixelRaw - 17516) * kSlope;
+			// raw/64 - 273.15 works for both high and low gain modes
+			float tempCenter = centerPixelRaw / 64.0f - 273.15f;
+			float tempMin = minPixelRaw / 64.0f - 273.15f;
+			float tempMax = maxPixelRaw / 64.0f - 273.15f;
 
 			String tempText = String.format("%.1f°C  Min: %.1f°C  Max: %.1f°C", tempCenter, tempMin, tempMax);
 			if (showROIOverlay) {
-				float roiTempMin = (roiMinPixelRaw - 17516) * kSlope;
-				float roiTempMax = (roiMaxPixelRaw - 17516) * kSlope;
+				float roiTempMin = roiMinPixelRaw / 64.0f - 273.15f;
+				float roiTempMax = roiMaxPixelRaw / 64.0f - 273.15f;
 				tempText += String.format("  ROI: %.1f-%.1f°C", roiTempMin, roiTempMax);
 			}
 
@@ -821,8 +834,8 @@ public class MainActivity extends Activity {
 
 	// Linear SeekBar mapping for absolute temperature (mode 2)
 	private static final float TEMP_ABS_MIN = -40.0f;
-	private static final float TEMP_ABS_MAX = 170.0f;
-	private static final int TEMP_SEEKBAR_MAX = 2100;  // 0.1° resolution
+	private static final float TEMP_ABS_MAX = 400.0f;
+	private static final int TEMP_SEEKBAR_MAX = 4400;  // 0.1° resolution over -40 to 400
 
 	private float tempSeekBarToDegrees(int progress) {
 		return TEMP_ABS_MIN + (TEMP_ABS_MAX - TEMP_ABS_MIN) * progress / (float) TEMP_SEEKBAR_MAX;
@@ -843,10 +856,9 @@ public class MainActivity extends Activity {
 	}
 
 	private void initTopBottomFromCurrentImage() {
-		final float kSlope = 37.0f / (19812 - 17516);
 		if (maxPixelRaw > minPixelRaw) {
-			manualBottomDegrees = (minPixelRaw - 17516) * kSlope;
-			manualTopDegrees = (maxPixelRaw - 17516) * kSlope;
+			manualBottomDegrees = minPixelRaw / 64.0f - 273.15f;
+			manualTopDegrees = maxPixelRaw / 64.0f - 273.15f;
 		} else {
 			manualBottomDegrees = 20.0f;
 			manualTopDegrees = 40.0f;
@@ -1047,6 +1059,41 @@ public class MainActivity extends Activity {
 				saveSettings();
 				Log.i("ThermalCamera", "Color scale mode: Manual Top/Bottom " + manualBottomDegrees + "-" + manualTopDegrees + "°C");
 				break;
+			case "toggle_gain":
+			case "set_gain_low":
+			case "set_gain_high": {
+				if (isSwitchingGain) {
+					Log.w("ThermalCamera", "Gain switch already in progress");
+					break;
+				}
+				boolean wantLow;
+				if (action.equals("toggle_gain")) {
+					wantLow = !isLowGain;
+				} else {
+					wantLow = action.equals("set_gain_low");
+				}
+				if (wantLow == isLowGain) {
+					Log.i("ThermalCamera", "Already in " + (isLowGain ? "low" : "high") + " gain mode");
+					break;
+				}
+				isSwitchingGain = true;
+				Button gb = findViewById(R.id.gainButton);
+				if (gb != null) { gb.setText("..."); gb.setEnabled(false); }
+				final int targetGain = wantLow ? 0 : 1;
+				new Thread(() -> {
+					int result = setGainMode(fd, targetGain);
+					runOnUiThread(() -> {
+						if (result == 0) {
+							isLowGain = wantLow;
+							saveSettings();
+						}
+						if (gb != null) { gb.setText(isLowGain ? "Low" : "High"); gb.setEnabled(true); }
+						isSwitchingGain = false;
+						Log.i("ThermalCamera", "Gain mode: " + (isLowGain ? "Low (wide)" : "High (narrow)"));
+					});
+				}).start();
+				break;
+			}
 			case "status":
 				Log.i("ThermalCamera", "STATUS: isRecording=" + isRecording +
 						", native_stream=" + native_stream +
@@ -1060,7 +1107,9 @@ public class MainActivity extends Activity {
 						", colorScaleMode=" + colorScaleMode +
 						", manualRangeDegrees=" + manualRangeDegrees +
 						", manualTopDegrees=" + manualTopDegrees +
-						", manualBottomDegrees=" + manualBottomDegrees);
+						", manualBottomDegrees=" + manualBottomDegrees +
+						", isLowGain=" + isLowGain +
+						", isSwitchingGain=" + isSwitchingGain);
 				break;
 			default:
 				Log.w("ThermalCamera", "Unknown control action: " + action);
@@ -1221,14 +1270,29 @@ public class MainActivity extends Activity {
 			}
         });
 
-		Button ctrlButton = findViewById(R.id.ctrlButton);
+		Button gainButton = findViewById(R.id.gainButton);
+		gainButton.setText(isLowGain ? "Low" : "High");
 
-        ctrlButton.setOnClickListener(new View.OnClickListener() {
+        gainButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-				sendCtrl(fd, color + 1);
-				color = (color + 1) % 11;
-				saveSettings();
+				if (isSwitchingGain) return;
+				isSwitchingGain = true;
+				gainButton.setText("...");
+				gainButton.setEnabled(false);
+				final int targetGain = isLowGain ? 1 : 0;  // 0=low/wide, 1=high/narrow
+				new Thread(() -> {
+					int result = setGainMode(fd, targetGain);
+					runOnUiThread(() -> {
+						if (result == 0) {
+							isLowGain = !isLowGain;
+							saveSettings();
+						}
+						gainButton.setText(isLowGain ? "Low" : "High");
+						gainButton.setEnabled(true);
+						isSwitchingGain = false;
+					});
+				}).start();
 			}
         });
 
