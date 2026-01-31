@@ -146,6 +146,11 @@ public class MainActivity extends Activity {
 	// Gain mode: false=high gain (narrow range, default), true=low gain (wide range)
 	private boolean isLowGain = false;
 	private boolean isSwitchingGain = false;
+	private volatile boolean isCalibrating = false;
+	// Track frame change after gain switch: store pre-switch center pixel raw value
+	private volatile boolean waitingForGainFrame = false;
+	private int preSwitchCenterRaw = 0;
+	private long gainSwitchTimeMs = 0;
 
 	// Overlay in saves setting
 	private boolean includeOverlayInSaves = false;
@@ -265,6 +270,8 @@ public class MainActivity extends Activity {
 					sendCtrl(fd, color);
 				}
 				// Trigger shutter (NUC) and restore gain mode on background thread
+				// Suppress frame display until calibration completes
+				isCalibrating = true;
 				final int connFd = fd;
 				new Thread(() -> {
 					Log.d("ThermalCamera", "Triggering shutter on connect...");
@@ -273,6 +280,8 @@ public class MainActivity extends Activity {
 						Log.d("ThermalCamera", "Restoring low gain mode...");
 						setGainMode(connFd, 0);
 					}
+					isCalibrating = false;
+					Log.d("ThermalCamera", "Calibration complete, displaying frames");
 				}).start();
 			}
 			return native_stream != 0;
@@ -308,6 +317,25 @@ public class MainActivity extends Activity {
 		int secondHalfOffset = kFrameWidth * kFrameHeight * kPixelSize;
 		int centerOffset = secondHalfOffset + 2 * centerIndex;
 		centerPixelRaw = (data[centerOffset] & 0xFF) | ((data[centerOffset + 1] & 0xFF) << 8);
+
+		// Detect when frames have actually changed after a gain switch
+		if (waitingForGainFrame) {
+			boolean frameChanged = Math.abs(centerPixelRaw - preSwitchCenterRaw) > 100;
+			boolean timedOut = (System.currentTimeMillis() - gainSwitchTimeMs) > 10000;
+			if (frameChanged || timedOut) {
+				waitingForGainFrame = false;
+				saveSettings();
+				runOnUiThread(() -> {
+					Button gb = findViewById(R.id.gainButton);
+					if (gb != null) {
+						gb.setText(isLowGain ? "Low Range" : "High Range");
+						gb.setEnabled(true);
+					}
+					isSwitchingGain = false;
+					Log.i("ThermalCamera", "Gain mode: " + (isLowGain ? "Low (wide)" : "High (narrow)") + " (frame changed)");
+				});
+			}
+		}
 
 		// Find min/max in calibrated thermal data
 		minPixelRaw = Integer.MAX_VALUE;
@@ -537,8 +565,8 @@ public class MainActivity extends Activity {
 			muxerStarted = false;
 			presentationTimeUs = 0;
 
-			findViewById(R.id.startVideoButton).setEnabled(false);
-			findViewById(R.id.stopVideoButton).setEnabled(true);
+			Button videoBtn = findViewById(R.id.videoToggleButton);
+			if (videoBtn != null) videoBtn.setText("Stop Video");
 			Toast.makeText(this, "Started recording", Toast.LENGTH_SHORT).show();
 			isRecording = true;
 
@@ -585,8 +613,8 @@ public class MainActivity extends Activity {
 			Toast.makeText(this, "Error stopping recording: " + e.getMessage(), Toast.LENGTH_SHORT).show();
 		}
 
-		findViewById(R.id.startVideoButton).setEnabled(true);
-		findViewById(R.id.stopVideoButton).setEnabled(false);
+		Button videoBtn = findViewById(R.id.videoToggleButton);
+		if (videoBtn != null) videoBtn.setText("Video");
 	}
 
 	private final Handler handler = new Handler();
@@ -611,6 +639,8 @@ public class MainActivity extends Activity {
 				Log.d("ThermalCamera", "runnable: got frame, length=" + last_frame.length + ", stream=" + native_stream);
 			}
 			frameCount++;
+			// Skip display during calibration (shutter/NUC in progress)
+			if (isCalibrating) return;
 			long frameStartUs = System.nanoTime() / 1000;
 			long bitmapStartUs = frameStartUs;
 			Bitmap bitmap = bitmapARGBFromByte(last_frame);
@@ -1077,20 +1107,22 @@ public class MainActivity extends Activity {
 					break;
 				}
 				isSwitchingGain = true;
+				preSwitchCenterRaw = centerPixelRaw;
 				Button gb = findViewById(R.id.gainButton);
 				if (gb != null) { gb.setText("..."); gb.setEnabled(false); }
 				final int targetGain = wantLow ? 0 : 1;
 				new Thread(() -> {
 					int result = setGainMode(fd, targetGain);
-					runOnUiThread(() -> {
-						if (result == 0) {
-							isLowGain = wantLow;
-							saveSettings();
-						}
-						if (gb != null) { gb.setText(isLowGain ? "Low" : "High"); gb.setEnabled(true); }
-						isSwitchingGain = false;
-						Log.i("ThermalCamera", "Gain mode: " + (isLowGain ? "Low (wide)" : "High (narrow)"));
-					});
+					if (result == 0) {
+						isLowGain = wantLow;
+						waitingForGainFrame = true;
+						gainSwitchTimeMs = System.currentTimeMillis();
+					} else {
+						runOnUiThread(() -> {
+							if (gb != null) { gb.setText(isLowGain ? "Low Range" : "High Range"); gb.setEnabled(true); }
+							isSwitchingGain = false;
+						});
+					}
 				}).start();
 				break;
 			}
@@ -1271,7 +1303,7 @@ public class MainActivity extends Activity {
         });
 
 		Button gainButton = findViewById(R.id.gainButton);
-		gainButton.setText(isLowGain ? "Low" : "High");
+		gainButton.setText(isLowGain ? "Low Range" : "High Range");
 
         gainButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -1280,35 +1312,33 @@ public class MainActivity extends Activity {
 				isSwitchingGain = true;
 				gainButton.setText("...");
 				gainButton.setEnabled(false);
+				preSwitchCenterRaw = centerPixelRaw;
 				final int targetGain = isLowGain ? 1 : 0;  // 0=low/wide, 1=high/narrow
 				new Thread(() -> {
 					int result = setGainMode(fd, targetGain);
-					runOnUiThread(() -> {
-						if (result == 0) {
-							isLowGain = !isLowGain;
-							saveSettings();
-						}
-						gainButton.setText(isLowGain ? "Low" : "High");
-						gainButton.setEnabled(true);
-						isSwitchingGain = false;
-					});
+					if (result == 0) {
+						isLowGain = !isLowGain;
+						// Don't update button yet — wait for frame content to actually change
+						waitingForGainFrame = true;
+						gainSwitchTimeMs = System.currentTimeMillis();
+					} else {
+						runOnUiThread(() -> {
+							gainButton.setText(isLowGain ? "Low Range" : "High Range");
+							gainButton.setEnabled(true);
+							isSwitchingGain = false;
+						});
+					}
 				}).start();
 			}
         });
 
 		findViewById(R.id.settingsButton).setOnClickListener(v -> showSettingsDialog());
 
-		findViewById(R.id.startVideoButton).setOnClickListener(new View.OnClickListener() {
-			@Override
-			public void onClick(View v) {
-				startRecording(v);
-			}
-		});
-
-		findViewById(R.id.stopVideoButton).setOnClickListener(new View.OnClickListener() {
-			@Override
-			public void onClick(View v) {
+		findViewById(R.id.videoToggleButton).setOnClickListener(v -> {
+			if (isRecording) {
 				stopRecording(v);
+			} else {
+				startRecording(v);
 			}
 		});
 
