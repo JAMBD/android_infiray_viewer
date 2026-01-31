@@ -102,6 +102,9 @@ The app can be controlled via ADB intents, enabling AI/automation to trigger act
 | `toggle_minmax` | Toggle min/max tracking overlay |
 | `toggle_roi` | Toggle ROI (region of interest) tracking |
 | `toggle_overlay_in_saves` | Toggle including overlay in saved images/videos |
+| `set_scale_auto` | Set color scale to auto mode |
+| `set_scale_manual` | Set color scale to manual center ±range mode |
+| `set_manual_range <deg>` | Set manual range in degrees (0.5-20.0) |
 | `status` | Log current state (view with `adb logcat -d \| grep STATUS`) |
 | `pull_latest_image` | Pull most recent PNG to /tmp/ |
 | `pull_latest_video` | Pull most recent MP4 to /tmp/ |
@@ -110,6 +113,12 @@ The app can be controlled via ADB intents, enabling AI/automation to trigger act
 ### Direct ADB Usage
 ```bash
 adb shell am start -n info.jnlm.thermal_camera/.MainActivity --es action <command>
+```
+
+### Direct ADB Usage (with parameters)
+```bash
+# For set_manual_range which needs a float parameter:
+adb shell am start -n info.jnlm.thermal_camera/.MainActivity --es action set_manual_range --ef range 5.0
 ```
 
 ### Adding New Remote Actions
@@ -121,3 +130,39 @@ When adding new features or actions to the app, **always add corresponding ADB r
 3. Update this documentation
 
 This ensures all app functionality can be triggered programmatically for testing and automation.
+
+---
+
+## Remote Testing (REQUIRED)
+
+**After implementing any feature, Claude MUST test it remotely via ADB before considering the task done.** Do not ask the user to test manually — use the tools below to verify the feature works end-to-end on the device.
+
+### Testing Workflow
+
+1. **Build & deploy**: `./gradlew installDebug && adb shell am start -n info.jnlm.thermal_camera/.MainActivity`
+2. **Wait for app launch**: `sleep 2`
+3. **Trigger the feature** via `./scripts/thermal_control.sh <command>` or direct ADB intents
+4. **Take a screenshot**: `adb shell screencap /sdcard/screen.png && adb pull /sdcard/screen.png /tmp/`
+5. **View the screenshot** using the Read tool on the pulled image file to visually verify the result
+6. **Check logs** if needed: `adb logcat -d | grep ThermalCamera | tail -20`
+7. **Test multiple states** (e.g. toggle on/off, different parameter values) — take screenshots of each
+8. **Test persistence**: kill and relaunch the app, screenshot again to verify settings survived
+
+### Screenshot Verification
+
+When verifying UI changes, always pull and view screenshots. Look for:
+- New UI elements appearing/disappearing as expected
+- Text labels showing correct values
+- Visual changes in the thermal image (e.g. color scale differences)
+
+### Quick Reference
+```bash
+# Full build-deploy-screenshot cycle
+./gradlew installDebug && adb shell am start -n info.jnlm.thermal_camera/.MainActivity && sleep 3 && adb shell screencap /sdcard/screen.png && adb pull /sdcard/screen.png /tmp/
+
+# Screenshot only
+adb shell screencap /sdcard/screen.png && adb pull /sdcard/screen.png /tmp/
+
+# Check recent logs
+adb logcat -d | grep ThermalCamera | tail -30
+```

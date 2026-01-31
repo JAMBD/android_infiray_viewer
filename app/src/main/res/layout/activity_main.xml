@@ -4,6 +4,7 @@
     android:orientation="vertical"
     android:gravity="center"
     android:keepScreenOn="true"
+    android:fitsSystemWindows="true"
     android:background="@color/background">
 
     <FrameLayout
@@ -15,6 +16,49 @@
             android:id="@+id/imageView"
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
+
+        <LinearLayout
+            android:id="@+id/manualRangeOverlay"
+            android:layout_width="48dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="end"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:background="#40000000">
+
+            <EditText
+                android:id="@+id/rangeLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="±2.0"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:padding="4dp"
+                android:gravity="center"
+                android:inputType="numberDecimal"
+                android:background="@android:color/transparent"
+                android:imeOptions="actionDone"
+                android:selectAllOnFocus="true"
+                android:singleLine="true" />
+
+            <FrameLayout
+                android:id="@+id/seekBarContainer"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <SeekBar
+                    android:id="@+id/rangeSeekBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_gravity="center"
+                    android:rotation="270"
+                    android:max="39"
+                    android:progress="3" />
+
+            </FrameLayout>
+
+        </LinearLayout>
 
     </FrameLayout>
 

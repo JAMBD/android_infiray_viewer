@@ -4,11 +4,18 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.os.Bundle;
 import android.Manifest;
+import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.Button;
+import android.widget.SeekBar;
+import android.widget.Spinner;
+import android.widget.TextView;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.inputmethod.EditorInfo;
 import android.content.pm.PackageManager;
 import android.hardware.usb.UsbDeviceConnection;
 import androidx.core.app.ActivityCompat;
@@ -21,29 +28,23 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
-import android.os.Bundle;
 import android.widget.Toast;
 import android.util.Log;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 import java.util.HashMap;
-import java.io.FileNotFoundException;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.nio.ByteOrder;
 
 import android.net.Uri;
 import android.content.ContentValues;
-import android.content.Context;
-import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.graphics.Bitmap;
 import java.io.File;
 import java.io.InputStream;
-import java.io.FileOutputStream;
-
 
 import android.view.WindowManager;
 import android.widget.ImageView;
@@ -55,10 +56,14 @@ import android.graphics.Matrix;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Color;
+import android.graphics.PorterDuff;
+import android.graphics.drawable.Drawable;
+import android.view.ViewGroup;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
+import android.view.Surface;
 
 public class MainActivity extends Activity {
 	static {
@@ -72,7 +77,6 @@ public class MainActivity extends Activity {
 
 	private static final String ACTION_USB_PERMISSION =
             "info.jnlm.thermal_camera.USB_PERMISSION";
-	private static final String kLutFileName = "colormap_lut.cube";
 	private static final int kFrameWidth = 256;
 	private static final int kFrameHeight = 192;
 	private static final int kPixelSize = 2;
@@ -87,6 +91,10 @@ public class MainActivity extends Activity {
 	private boolean isRecording = false;
 	private String videoFilename = "invalid";
 	private int centerPixelRaw = 0;
+
+	// Color scale mode: 0=Auto, 1=Manual Center ±Range
+	private int colorScaleMode = 0;
+	private float manualRangeDegrees = 2.0f;
 
 	// Overlay settings
 	private boolean showCenterCrosshair = true;
@@ -106,9 +114,17 @@ public class MainActivity extends Activity {
 	private int currentVideoHeight = VIDEO_HEIGHT_RAW;
 	private MediaCodec mediaCodec;
 	private MediaMuxer mediaMuxer;
+	private Surface inputSurface;
 	private int videoTrackIndex = -1;
 	private boolean muxerStarted = false;
 	private long presentationTimeUs = 0;
+
+	// Performance instrumentation
+	private long perfTotalFrameTimeUs = 0;
+	private long perfBitmapTimeUs = 0;
+	private long perfEncodeTimeUs = 0;
+	private int perfFrameCount = 0;
+
 	private int minPixelRaw = 0, maxPixelRaw = 0;
 	private int minPixelX = 0, minPixelY = 0;
 	private int maxPixelX = 0, maxPixelY = 0;
@@ -140,6 +156,8 @@ public class MainActivity extends Activity {
 		editor.putInt("roiY1", roiY1);
 		editor.putInt("roiX2", roiX2);
 		editor.putInt("roiY2", roiY2);
+		editor.putInt("colorScaleMode", colorScaleMode);
+		editor.putFloat("manualRangeDegrees", manualRangeDegrees);
 		editor.apply();
 	}
 
@@ -154,6 +172,8 @@ public class MainActivity extends Activity {
 		roiY1 = prefs.getInt("roiY1", 48);
 		roiX2 = prefs.getInt("roiX2", 192);
 		roiY2 = prefs.getInt("roiY2", 144);
+		colorScaleMode = prefs.getInt("colorScaleMode", 0);
+		manualRangeDegrees = prefs.getFloat("manualRangeDegrees", 2.0f);
 	}
 
 	private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
@@ -238,6 +258,11 @@ public class MainActivity extends Activity {
 	public Bitmap bitmapARGBFromByte(byte[] data){
 		int[] pixels = new int[kFrameWidth * kFrameHeight];
 		final int kNumPixels = kFrameWidth * kFrameHeight;
+		final int kExpectedSize = kNumPixels * kPixelSize * 2; // first half + second half
+		if (data.length < kExpectedSize) {
+			Log.w("ThermalCamera", "Short frame: " + data.length + " < " + kExpectedSize);
+			return Bitmap.createBitmap(pixels, kFrameWidth, kFrameHeight, Bitmap.Config.ARGB_8888);
+		}
 
 		// Center pixel index (128, 96) in 256x192 frame
 		final int centerX = kFrameWidth / 2;
@@ -303,6 +328,22 @@ public class MainActivity extends Activity {
 			}
 		}
 
+		// In manual mode, map color palette to ±manualRangeDegrees around center pixel
+		if (colorScaleMode == 1) {
+			final float kSlope = 37.0f / (19812 - 17516);
+			float autoRange = max - min;
+			if (autoRange > 0.0001f) {
+				float tempRange = ((maxPixelRaw - minPixelRaw) * kSlope);
+				float degreesPerUnit = tempRange / autoRange;
+				if (Math.abs(degreesPerUnit) > 0.0001f) {
+					int centerVal = (data[2 * centerIndex] & 0xFF) | ((data[2 * centerIndex + 1] & 0xFF) << 8);
+					float delta = manualRangeDegrees / degreesPerUnit;
+					min = centerVal / 65535.0f - delta;
+					max = centerVal / 65535.0f + delta;
+				}
+			}
+		}
+
 		// Handle edge case where all pixels have same value (e.g. during camera init)
 		float range = max - min;
 		if (range < 0.0001f) {
@@ -327,50 +368,13 @@ public class MainActivity extends Activity {
 	}
 
 	private void encodeFrame(Bitmap bitmap) {
-		if (!isRecording || mediaCodec == null) return;
+		if (!isRecording || mediaCodec == null || inputSurface == null) return;
 
 		try {
-			// Get input buffer
-			int inputBufferIndex = mediaCodec.dequeueInputBuffer(10000);
-			if (inputBufferIndex < 0) {
-				Log.w("ThermalCamera", "No input buffer available");
-				return;
-			}
+			Canvas canvas = inputSurface.lockCanvas(null);
+			canvas.drawBitmap(bitmap, 0, 0, null);
+			inputSurface.unlockCanvasAndPost(canvas);
 
-			ByteBuffer inputBuffer = mediaCodec.getInputBuffer(inputBufferIndex);
-			if (inputBuffer == null) return;
-
-			// Convert ARGB bitmap to YUV420 (NV12 format)
-			inputBuffer.clear();
-			int[] pixels = new int[currentVideoWidth * currentVideoHeight];
-			bitmap.getPixels(pixels, 0, currentVideoWidth, 0, 0, currentVideoWidth, currentVideoHeight);
-
-			// Y plane
-			for (int i = 0; i < currentVideoWidth * currentVideoHeight; i++) {
-				int pixel = pixels[i];
-				int r = (pixel >> 16) & 0xFF;
-				int g = (pixel >> 8) & 0xFF;
-				int b = pixel & 0xFF;
-				int y = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
-				inputBuffer.put((byte) Math.max(0, Math.min(255, y)));
-			}
-
-			// UV plane (NV12: interleaved U and V, subsampled 2x2)
-			for (int j = 0; j < currentVideoHeight / 2; j++) {
-				for (int i = 0; i < currentVideoWidth / 2; i++) {
-					int pixel = pixels[(j * 2) * currentVideoWidth + (i * 2)];
-					int r = (pixel >> 16) & 0xFF;
-					int g = (pixel >> 8) & 0xFF;
-					int b = pixel & 0xFF;
-					int u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
-					int v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
-					inputBuffer.put((byte) Math.max(0, Math.min(255, u)));
-					inputBuffer.put((byte) Math.max(0, Math.min(255, v)));
-				}
-			}
-
-			// Queue the input buffer
-			mediaCodec.queueInputBuffer(inputBufferIndex, 0, inputBuffer.position(), presentationTimeUs, 0);
 			presentationTimeUs += 1000000L / VIDEO_FRAME_RATE;
 
 			// Drain output buffers
@@ -383,11 +387,7 @@ public class MainActivity extends Activity {
 
 	private void drainEncoder(boolean endOfStream) {
 		if (endOfStream) {
-			// Signal EOS by sending an empty buffer with EOS flag
-			int inputBufferIndex = mediaCodec.dequeueInputBuffer(10000);
-			if (inputBufferIndex >= 0) {
-				mediaCodec.queueInputBuffer(inputBufferIndex, 0, 0, presentationTimeUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
-			}
+			mediaCodec.signalEndOfInputStream();
 		}
 
 		MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
@@ -427,31 +427,6 @@ public class MainActivity extends Activity {
 					break;
 				}
 			}
-		}
-	}
-
-	private Uri createFileInDownloads(String fileName) {
-		ContentValues contentValues = new ContentValues();
-		contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, fileName);
-		contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream");
-		contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS);
-		return getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues);
-	}
-
-	// ffmpeg only deals in file paths, not URI's, so it is copied here to somewhere that corresponds to a file path.
-	public void prepareLUTFile() {
-		File lutFile = new File(getExternalFilesDir(null), kLutFileName);
-
-		try (InputStream is = getAssets().open(kLutFileName);
-				OutputStream os = new FileOutputStream(lutFile)) {
-			byte[] buffer = new byte[1024];
-			int length;
-			while ((length = is.read(buffer)) != -1) {
-				os.write(buffer, 0, length);
-			}
-			Log.i("ThermalCamera", "LUT file copied to app-specific storage.");
-		} catch (IOException e) {
-			Log.e("ThermalCamera", "Error copying LUT file", e);
 		}
 	}
 
@@ -505,13 +480,14 @@ public class MainActivity extends Activity {
 
 			// Set up MediaCodec for H.264 encoding
 			MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, currentVideoWidth, currentVideoHeight);
-			format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible);
+			format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
 			format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate);
 			format.setInteger(MediaFormat.KEY_FRAME_RATE, VIDEO_FRAME_RATE);
 			format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
 
 			mediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
 			mediaCodec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+			inputSurface = mediaCodec.createInputSurface();
 			mediaCodec.start();
 
 			// Set up MediaMuxer
@@ -533,7 +509,6 @@ public class MainActivity extends Activity {
 
 	public void stopRecording(View view) {
 		isRecording = false;
-
 		try {
 			// Signal end of stream and drain remaining data
 			if (mediaCodec != null) {
@@ -541,6 +516,11 @@ public class MainActivity extends Activity {
 				mediaCodec.stop();
 				mediaCodec.release();
 				mediaCodec = null;
+			}
+
+			if (inputSurface != null) {
+				inputSurface.release();
+				inputSurface = null;
 			}
 
 			if (mediaMuxer != null) {
@@ -568,8 +548,6 @@ public class MainActivity extends Activity {
 		findViewById(R.id.stopVideoButton).setEnabled(false);
 	}
 
-
-
 	private final Handler handler = new Handler();
 	private int frameCount = 0;
     private final Runnable runnable = new Runnable() {
@@ -592,7 +570,11 @@ public class MainActivity extends Activity {
 				Log.d("ThermalCamera", "runnable: got frame, length=" + last_frame.length + ", stream=" + native_stream);
 			}
 			frameCount++;
+			long frameStartUs = System.nanoTime() / 1000;
+			long bitmapStartUs = frameStartUs;
 			Bitmap bitmap = bitmapARGBFromByte(last_frame);
+			Bitmap rawBitmap = bitmap; // Save pre-transform bitmap for video encoding
+			long bitmapEndUs = System.nanoTime() / 1000;
 
 			// Create scaled bitmap for display
 			Matrix matrix = new Matrix();
@@ -741,19 +723,38 @@ public class MainActivity extends Activity {
 			compositeCanvas.drawBitmap(thermalWithCrosshairs, 0, bannerHeight, null);
 
 			// Encode video frame AFTER overlay drawing
+			long encodeStartUs = System.nanoTime() / 1000;
 			if (isRecording) {
 				Bitmap videoBitmap;
 				if (includeOverlayInSaves) {
 					// Use display bitmap (with overlays) at high resolution
 					videoBitmap = Bitmap.createScaledBitmap(displayBitmapWithOverlays, currentVideoWidth, currentVideoHeight, true);
 				} else {
-					// Raw thermal without overlays
-					Bitmap rawBitmap = bitmapARGBFromByte(last_frame);
+					// Reuse saved rawBitmap with rotate-only (no redundant bitmapARGBFromByte call)
 					Matrix videoMatrix = new Matrix();
 					videoMatrix.postRotate(90);
 					videoBitmap = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.getWidth(), rawBitmap.getHeight(), videoMatrix, false);
 				}
 				encodeFrame(videoBitmap);
+			}
+			long encodeEndUs = System.nanoTime() / 1000;
+			long frameEndUs = encodeEndUs;
+
+			// Performance instrumentation
+			perfBitmapTimeUs += (bitmapEndUs - bitmapStartUs);
+			perfEncodeTimeUs += (encodeEndUs - encodeStartUs);
+			perfTotalFrameTimeUs += (frameEndUs - frameStartUs);
+			perfFrameCount++;
+			if (perfFrameCount >= 100) {
+				Log.i("ThermalCamera", String.format("PERF: avg frame=%.1fms bitmap=%.1fms encode=%.1fms (over %d frames)",
+					perfTotalFrameTimeUs / 1000.0 / perfFrameCount,
+					perfBitmapTimeUs / 1000.0 / perfFrameCount,
+					perfEncodeTimeUs / 1000.0 / perfFrameCount,
+					perfFrameCount));
+				perfTotalFrameTimeUs = 0;
+				perfBitmapTimeUs = 0;
+				perfEncodeTimeUs = 0;
+				perfFrameCount = 0;
 			}
 
 			ImageView imageView = findViewById(R.id.imageView);
@@ -785,11 +786,48 @@ public class MainActivity extends Activity {
 		}
 	}
 
+	// Nonlinear SeekBar mapping: more sensitivity at low end
+	// progress 0-1000 -> degrees 0.5-170.0 via quadratic curve
+	private static final float RANGE_MIN = 0.5f;
+	private static final float RANGE_MAX = 170.0f;
+	private static final int RANGE_SEEKBAR_MAX = 1000;
+
+	private float seekBarToDegrees(int progress) {
+		float t = progress / (float) RANGE_SEEKBAR_MAX;
+		return RANGE_MIN + (RANGE_MAX - RANGE_MIN) * t * t;
+	}
+
+	private int degreesToSeekBar(float degrees) {
+		float t = (float) Math.sqrt((degrees - RANGE_MIN) / (RANGE_MAX - RANGE_MIN));
+		return Math.round(t * RANGE_SEEKBAR_MAX);
+	}
+
+	private void updateRangeOverlayVisibility() {
+		View overlay = findViewById(R.id.manualRangeOverlay);
+		if (overlay != null) {
+			overlay.setVisibility(colorScaleMode == 1 ? View.VISIBLE : View.GONE);
+		}
+	}
+
 	private void showSettingsDialog() {
 		LinearLayout layout = new LinearLayout(this);
 		layout.setOrientation(LinearLayout.VERTICAL);
 		int padding = (int) (16 * getResources().getDisplayMetrics().density);
 		layout.setPadding(padding, padding, padding, padding);
+
+		// Color scale mode spinner
+		TextView scaleLabel = new TextView(this);
+		scaleLabel.setText("Color scale mode:");
+		layout.addView(scaleLabel);
+
+		Spinner scaleSpinner = new Spinner(this);
+		ArrayAdapter<String> scaleAdapter = new ArrayAdapter<>(this,
+			android.R.layout.simple_spinner_item,
+			new String[]{"Auto", "Center ±Range"});
+		scaleAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+		scaleSpinner.setAdapter(scaleAdapter);
+		scaleSpinner.setSelection(colorScaleMode);
+		layout.addView(scaleSpinner);
 
 		CheckBox centerCrosshairCheckbox = new CheckBox(this);
 		centerCrosshairCheckbox.setText("Center crosshair");
@@ -815,6 +853,7 @@ public class MainActivity extends Activity {
 			.setTitle("Settings")
 			.setView(layout)
 			.setPositiveButton("OK", (dialog, which) -> {
+				colorScaleMode = scaleSpinner.getSelectedItemPosition();
 				showCenterCrosshair = centerCrosshairCheckbox.isChecked();
 				showMinMaxOverlay = minMaxCheckbox.isChecked();
 				boolean wasROIEnabled = showROIOverlay;
@@ -825,8 +864,9 @@ public class MainActivity extends Activity {
 					roiX2 = 192; roiY2 = 144;
 				}
 				includeOverlayInSaves = overlayInSavesCheckbox.isChecked();
+				updateRangeOverlayVisibility();
 				saveSettings();
-				Log.d("ThermalCamera", "Settings updated: centerCrosshair=" + showCenterCrosshair + ", minMax=" + showMinMaxOverlay + ", roi=" + showROIOverlay + ", overlayInSaves=" + includeOverlayInSaves);
+				Log.d("ThermalCamera", "Settings updated: colorScaleMode=" + colorScaleMode + ", centerCrosshair=" + showCenterCrosshair + ", minMax=" + showMinMaxOverlay + ", roi=" + showROIOverlay + ", overlayInSaves=" + includeOverlayInSaves);
 			})
 			.setNegativeButton("Cancel", null)
 			.show();
@@ -911,6 +951,18 @@ public class MainActivity extends Activity {
 				saveSettings();
 				Log.i("ThermalCamera", "Include overlay in saves: " + includeOverlayInSaves);
 				break;
+			case "set_scale_auto":
+				colorScaleMode = 0;
+				updateRangeOverlayVisibility();
+				saveSettings();
+				Log.i("ThermalCamera", "Color scale mode: Auto");
+				break;
+			case "set_scale_manual":
+				colorScaleMode = 1;
+				updateRangeOverlayVisibility();
+				saveSettings();
+				Log.i("ThermalCamera", "Color scale mode: Manual Center ±" + manualRangeDegrees + "°C");
+				break;
 			case "status":
 				Log.i("ThermalCamera", "STATUS: isRecording=" + isRecording +
 						", native_stream=" + native_stream +
@@ -920,7 +972,9 @@ public class MainActivity extends Activity {
 						", centerCrosshair=" + showCenterCrosshair +
 						", minMaxOverlay=" + showMinMaxOverlay +
 						", roiOverlay=" + showROIOverlay +
-						", overlayInSaves=" + includeOverlayInSaves);
+						", overlayInSaves=" + includeOverlayInSaves +
+						", colorScaleMode=" + colorScaleMode +
+						", manualRangeDegrees=" + manualRangeDegrees);
 				break;
 			default:
 				Log.w("ThermalCamera", "Unknown control action: " + action);
@@ -942,7 +996,26 @@ public class MainActivity extends Activity {
 		// Handle control commands from ADB
 		String controlAction = intent.getStringExtra("action");
 		if (controlAction != null) {
-			handleControlAction(controlAction);
+			if (controlAction.equals("set_manual_range")) {
+				float range = intent.getFloatExtra("range", -1.0f);
+				if (range >= RANGE_MIN && range <= RANGE_MAX) {
+					manualRangeDegrees = range;
+					SeekBar seekBar = findViewById(R.id.rangeSeekBar);
+					EditText label = findViewById(R.id.rangeLabel);
+					if (seekBar != null) {
+						seekBar.setProgress(degreesToSeekBar(range));
+					}
+					if (label != null) {
+						label.setText(String.format("±%.1f", manualRangeDegrees));
+					}
+					saveSettings();
+					Log.i("ThermalCamera", "Manual range set to ±" + manualRangeDegrees + "°C");
+				} else {
+					Log.w("ThermalCamera", "Invalid range value: " + range + " (must be 0.5-170.0)");
+				}
+			} else {
+				handleControlAction(controlAction);
+			}
 		}
 	}
 
@@ -986,7 +1059,6 @@ public class MainActivity extends Activity {
 		}
 	}
 
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -1016,7 +1088,6 @@ public class MainActivity extends Activity {
 
 		connectCamera();
 
-
 		Button frameButton = findViewById(R.id.getFrameButton);
 
         frameButton.setOnClickListener(new View.OnClickListener() {
@@ -1043,7 +1114,6 @@ public class MainActivity extends Activity {
 				saveImageToGallery(getApplicationContext(), bitmapToSave, "thermal_camera", dateTimeString + ".png");
 			}
         });
-
 
 		Button ctrlButton = findViewById(R.id.ctrlButton);
 
@@ -1072,6 +1142,74 @@ public class MainActivity extends Activity {
 			}
 		});
 
+		// Set up manual range SeekBar
+		SeekBar rangeSeekBar = findViewById(R.id.rangeSeekBar);
+		EditText rangeLabel = findViewById(R.id.rangeLabel);
+
+		// Bright magenta thumb so it's visible against any colormap
+		Drawable thumb = rangeSeekBar.getThumb();
+		if (thumb != null) thumb.setColorFilter(0xFFFF00FF, PorterDuff.Mode.SRC_IN);
+		rangeSeekBar.getProgressDrawable().setColorFilter(0xFFFF00FF, PorterDuff.Mode.SRC_IN);
+
+		// Size the rotated SeekBar width to its container height so the track spans the full extent
+		View seekBarContainer = findViewById(R.id.seekBarContainer);
+		seekBarContainer.post(() -> {
+			int h = seekBarContainer.getHeight();
+			if (h > 0) {
+				ViewGroup.LayoutParams lp = rangeSeekBar.getLayoutParams();
+				lp.width = h;
+				rangeSeekBar.setLayoutParams(lp);
+			}
+		});
+
+		// Nonlinear SeekBar: 0-1000 -> 0.5-170°C via quadratic curve
+		rangeSeekBar.setMax(RANGE_SEEKBAR_MAX);
+		rangeSeekBar.setProgress(degreesToSeekBar(manualRangeDegrees));
+		rangeLabel.setText(String.format("±%.1f", manualRangeDegrees));
+		rangeSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+			@Override
+			public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+				manualRangeDegrees = seekBarToDegrees(progress);
+				rangeLabel.setText(String.format("±%.1f", manualRangeDegrees));
+			}
+			@Override
+			public void onStartTrackingTouch(SeekBar seekBar) {}
+			@Override
+			public void onStopTrackingTouch(SeekBar seekBar) {
+				saveSettings();
+			}
+		});
+
+		// Apply typed value from EditText
+		Runnable applyRangeFromLabel = () -> {
+			try {
+				String text = rangeLabel.getText().toString().replace("±", "").replace("°C", "").trim();
+				float val = Float.parseFloat(text);
+				val = Math.max(RANGE_MIN, Math.min(RANGE_MAX, val));
+				manualRangeDegrees = val;
+				rangeSeekBar.setProgress(degreesToSeekBar(val));
+				saveSettings();
+			} catch (NumberFormatException e) {
+				// ignore invalid input
+			}
+			rangeLabel.setText(String.format("±%.1f", manualRangeDegrees));
+		};
+
+		rangeLabel.setOnEditorActionListener((v, actionId, event) -> {
+			if (actionId == EditorInfo.IME_ACTION_DONE || (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER)) {
+				applyRangeFromLabel.run();
+				rangeLabel.clearFocus();
+				return true;
+			}
+			return false;
+		});
+
+		rangeLabel.setOnFocusChangeListener((v, hasFocus) -> {
+			if (!hasFocus) {
+				applyRangeFromLabel.run();
+			}
+		});
+		updateRangeOverlayVisibility();
 
 		WindowManager windowManager = (WindowManager) this.getSystemService(Context.WINDOW_SERVICE);
 		DisplayMetrics metrics = new DisplayMetrics();

@@ -7,3 +7,7 @@ app/.cxx/
 build/
 *.swp
 tmp/
+
+# Signing keys - never commit these
+*.jks
+*.keystore
