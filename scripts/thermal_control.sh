@@ -11,7 +11,7 @@ PACKAGE="info.jnlm.thermal_camera"
 ACTIVITY=".MainActivity"
 
 case "$1" in
-    capture_image|capture_raw|start_video|stop_video|cycle_color|status|toggle_center_crosshair|toggle_minmax|toggle_roi|toggle_overlay_in_saves|set_scale_auto|set_scale_manual|set_scale_topbottom|toggle_gain|set_gain_low|set_gain_high)
+    capture_image|capture_raw|start_video|stop_video|cycle_color|status|toggle_center_crosshair|toggle_minmax|toggle_roi|toggle_overlay_in_saves|set_scale_auto|set_scale_manual|set_scale_topbottom|toggle_gain|set_gain_low|set_gain_high|toggle_mirror|set_mirror_on|set_mirror_off)
         adb shell am start -n "${PACKAGE}/${ACTIVITY}" --es action "$1"
         ;;
     set_manual_range)
@@ -37,6 +37,19 @@ case "$1" in
             exit 1
         fi
         adb shell am start -n "${PACKAGE}/${ACTIVITY}" --es action set_manual_bottom --ef temp "$2"
+        ;;
+    auto_mirror)
+        orientation=$(adb shell cat /sys/class/typec/port0/orientation 2>/dev/null | tr -d '\r\n')
+        if [ "$orientation" = "normal" ]; then
+            echo "USB-C orientation: normal -> mirror ON"
+            adb shell am start -n "${PACKAGE}/${ACTIVITY}" --es action set_mirror_on
+        elif [ "$orientation" = "reverse" ]; then
+            echo "USB-C orientation: reverse -> mirror OFF"
+            adb shell am start -n "${PACKAGE}/${ACTIVITY}" --es action set_mirror_off
+        else
+            echo "Could not read USB-C orientation (got: '$orientation')"
+            exit 1
+        fi
         ;;
     pull_latest_image)
         latest=$(adb shell ls -t /sdcard/Pictures/thermal_camera/*.png 2>/dev/null | head -1 | tr -d '\r')
@@ -91,6 +104,10 @@ case "$1" in
         echo "  toggle_gain            - Toggle between high/low gain mode"
         echo "  set_gain_low           - Set low gain (wide range, up to ~400°C)"
         echo "  set_gain_high          - Set high gain (narrow range, more detail)"
+        echo "  toggle_mirror          - Toggle image mirror (for USB-C orientation)"
+        echo "  set_mirror_on          - Enable image mirror"
+        echo "  set_mirror_off         - Disable image mirror"
+        echo "  auto_mirror            - Auto-detect USB-C orientation and set mirror"
         echo "  status                 - Log current app status (view with: adb logcat -d | grep STATUS)"
         echo ""
         echo "  pull_latest_image      - Pull most recent PNG to /tmp/"

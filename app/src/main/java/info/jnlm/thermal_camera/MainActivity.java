@@ -139,7 +139,7 @@ public class MainActivity extends Activity {
 	private boolean showROIOverlay = false;
 	private int roiX1 = 64, roiY1 = 48;   // Top-left in frame coords (default: center quarter)
 	private int roiX2 = 192, roiY2 = 144; // Bottom-right in frame coords
-	private int roiMinPixelRaw = 0, roiMaxPixelRaw = 0;
+	private int roiMinPixelRaw = 0, roiMaxPixelRaw = 0, roiAvgPixelRaw = 0;
 	private int roiMinPixelX = 0, roiMinPixelY = 0;
 	private int roiMaxPixelX = 0, roiMaxPixelY = 0;
 
@@ -155,6 +155,9 @@ public class MainActivity extends Activity {
 	// Overlay in saves setting
 	private boolean includeOverlayInSaves = false;
 	private Bitmap displayBitmapWithOverlays = null;
+
+	// Mirror image based on USB-C connector orientation
+	private boolean mirrorImage = false;
 
 	// Preferences
 	private static final String PREFS_NAME = "ThermalCameraPrefs";
@@ -176,6 +179,7 @@ public class MainActivity extends Activity {
 		editor.putFloat("manualTopDegrees", manualTopDegrees);
 		editor.putFloat("manualBottomDegrees", manualBottomDegrees);
 		editor.putBoolean("isLowGain", isLowGain);
+		editor.putBoolean("mirrorImage", mirrorImage);
 		editor.apply();
 	}
 
@@ -195,6 +199,7 @@ public class MainActivity extends Activity {
 		manualTopDegrees = prefs.getFloat("manualTopDegrees", 40.0f);
 		manualBottomDegrees = prefs.getFloat("manualBottomDegrees", 20.0f);
 		isLowGain = prefs.getBoolean("isLowGain", false);
+		mirrorImage = prefs.getBoolean("mirrorImage", false);
 	}
 
 	private final BroadcastReceiver usbReceiver = new BroadcastReceiver() {
@@ -227,6 +232,7 @@ public class MainActivity extends Activity {
 			}
 		}
 	};
+
 
 	private boolean connectCamera() {
 		Log.d("ThermalCamera", "connectCamera called, current native_stream=" + native_stream + ", fd=" + fd);
@@ -299,6 +305,25 @@ public class MainActivity extends Activity {
 			return Bitmap.createBitmap(pixels, kFrameWidth, kFrameHeight, Bitmap.Config.ARGB_8888);
 		}
 
+		// Mirror image by reversing row order when USB-C is in "normal" orientation.
+		// This flips the Y axis of the 256x192 frame, which after the 90° display
+		// rotation becomes a horizontal mirror — correcting the left/right reversal.
+		// Done before any coordinate computation so overlays stay consistent.
+		if (mirrorImage) {
+			int rowBytes = kFrameWidth * kPixelSize;
+			byte[] tempRow = new byte[rowBytes];
+			for (int half = 0; half < 2; half++) {
+				int baseOffset = half * kNumPixels * kPixelSize;
+				for (int y = 0; y < kFrameHeight / 2; y++) {
+					int topOffset = baseOffset + y * rowBytes;
+					int botOffset = baseOffset + (kFrameHeight - 1 - y) * rowBytes;
+					System.arraycopy(data, topOffset, tempRow, 0, rowBytes);
+					System.arraycopy(data, botOffset, data, topOffset, rowBytes);
+					System.arraycopy(tempRow, 0, data, botOffset, rowBytes);
+				}
+			}
+		}
+
 		// Center pixel index (128, 96) in 256x192 frame
 		final int centerX = kFrameWidth / 2;
 		final int centerY = kFrameHeight / 2;
@@ -362,12 +387,16 @@ public class MainActivity extends Activity {
 
 			roiMinPixelRaw = Integer.MAX_VALUE;
 			roiMaxPixelRaw = Integer.MIN_VALUE;
+			long roiSum = 0;
+			int roiCount = 0;
 
 			for (int y = ry1; y <= ry2; y++) {
 				for (int x = rx1; x <= rx2; x++) {
 					int i = y * kFrameWidth + x;
 					int offset = secondHalfOffset + 2 * i;
 					int val = (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8);
+					roiSum += val;
+					roiCount++;
 					if (val < roiMinPixelRaw) {
 						roiMinPixelRaw = val;
 						roiMinPixelX = x;
@@ -380,6 +409,7 @@ public class MainActivity extends Activity {
 					}
 				}
 			}
+			roiAvgPixelRaw = roiCount > 0 ? (int)(roiSum / roiCount) : 0;
 		}
 
 		// In manual mode, map color palette to ±manualRangeDegrees around center pixel
@@ -754,6 +784,40 @@ public class MainActivity extends Activity {
 								roiMaxScreenX + miniCrosshairSize, roiMaxScreenY, paint);
 				canvas.drawLine(roiMaxScreenX, roiMaxScreenY - miniCrosshairSize,
 								roiMaxScreenX, roiMaxScreenY + miniCrosshairSize, paint);
+
+				// Draw ROI temperature text above the top-left corner of the box
+				float roiTempMin = roiMinPixelRaw / 64.0f - 273.15f;
+				float roiTempMax = roiMaxPixelRaw / 64.0f - 273.15f;
+				float roiTempAvg = roiAvgPixelRaw / 64.0f - 273.15f;
+				float roiTextSize = 42 * scale / 5.625f;
+				paint.setTextSize(roiTextSize);
+				float outlineWidth = 3 * scale / 5.625f;
+				float roiTextX = screenLeft;
+				float roiTextY = screenTop - 4 * scale / 5.625f;
+
+				// Draw each segment with black outline then colored fill
+				String[] roiParts = {
+					String.format("%.1f°", roiTempMin),
+					" avg:",
+					String.format("%.1f°", roiTempAvg),
+					" ",
+					String.format("%.1f°", roiTempMax)
+				};
+				int[] roiColors = {Color.CYAN, Color.WHITE, Color.WHITE, Color.WHITE, Color.YELLOW};
+				float cx = roiTextX;
+				for (int pi = 0; pi < roiParts.length; pi++) {
+					// Black outline
+					paint.setStyle(Paint.Style.STROKE);
+					paint.setStrokeWidth(outlineWidth);
+					paint.setColor(Color.BLACK);
+					canvas.drawText(roiParts[pi], cx, roiTextY, paint);
+					// Colored fill
+					paint.setStyle(Paint.Style.FILL);
+					paint.setColor(roiColors[pi]);
+					canvas.drawText(roiParts[pi], cx, roiTextY, paint);
+					cx += paint.measureText(roiParts[pi]);
+				}
+				paint.setStyle(Paint.Style.STROKE);
 			}
 
 			// Calculate temperature values (convert raw to Celsius)
@@ -763,11 +827,6 @@ public class MainActivity extends Activity {
 			float tempMax = maxPixelRaw / 64.0f - 273.15f;
 
 			String tempText = String.format("%.1f°C  Min: %.1f°C  Max: %.1f°C", tempCenter, tempMin, tempMax);
-			if (showROIOverlay) {
-				float roiTempMin = roiMinPixelRaw / 64.0f - 273.15f;
-				float roiTempMax = roiMaxPixelRaw / 64.0f - 273.15f;
-				tempText += String.format("  ROI: %.1f-%.1f°C", roiTempMin, roiTempMax);
-			}
 
 			// Create composite bitmap with text banner ABOVE thermal image
 			paint.setStyle(Paint.Style.FILL);
@@ -964,6 +1023,11 @@ public class MainActivity extends Activity {
 		overlayInSavesCheckbox.setChecked(includeOverlayInSaves);
 		layout.addView(overlayInSavesCheckbox);
 
+		CheckBox mirrorCheckbox = new CheckBox(this);
+		mirrorCheckbox.setText("Mirror image (flip USB-C)");
+		mirrorCheckbox.setChecked(mirrorImage);
+		layout.addView(mirrorCheckbox);
+
 		new AlertDialog.Builder(this)
 			.setTitle("Settings")
 			.setView(layout)
@@ -983,6 +1047,7 @@ public class MainActivity extends Activity {
 					roiX2 = 192; roiY2 = 144;
 				}
 				includeOverlayInSaves = overlayInSavesCheckbox.isChecked();
+				mirrorImage = mirrorCheckbox.isChecked();
 				updateRangeOverlayVisibility();
 				saveSettings();
 				Log.d("ThermalCamera", "Settings updated: colorScaleMode=" + colorScaleMode + ", centerCrosshair=" + showCenterCrosshair + ", minMax=" + showMinMaxOverlay + ", roi=" + showROIOverlay + ", overlayInSaves=" + includeOverlayInSaves);
@@ -1126,6 +1191,21 @@ public class MainActivity extends Activity {
 				}).start();
 				break;
 			}
+			case "toggle_mirror":
+				mirrorImage = !mirrorImage;
+				saveSettings();
+				Log.i("ThermalCamera", "Mirror image: " + mirrorImage);
+				break;
+			case "set_mirror_on":
+				mirrorImage = true;
+				saveSettings();
+				Log.i("ThermalCamera", "Mirror image: on");
+				break;
+			case "set_mirror_off":
+				mirrorImage = false;
+				saveSettings();
+				Log.i("ThermalCamera", "Mirror image: off");
+				break;
 			case "status":
 				Log.i("ThermalCamera", "STATUS: isRecording=" + isRecording +
 						", native_stream=" + native_stream +
@@ -1141,7 +1221,8 @@ public class MainActivity extends Activity {
 						", manualTopDegrees=" + manualTopDegrees +
 						", manualBottomDegrees=" + manualBottomDegrees +
 						", isLowGain=" + isLowGain +
-						", isSwitchingGain=" + isSwitchingGain);
+						", isSwitchingGain=" + isSwitchingGain +
+						", mirrorImage=" + mirrorImage);
 				break;
 			default:
 				Log.w("ThermalCamera", "Unknown control action: " + action);
