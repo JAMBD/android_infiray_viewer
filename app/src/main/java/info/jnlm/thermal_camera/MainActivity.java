@@ -431,17 +431,6 @@ public class MainActivity extends Activity {
         final int centerY = kFrameHeight / 2;
         final int centerIndex = centerY * kFrameWidth + centerX;
 
-        float min = 1;
-        float max = 0;
-        for (int i = 0; i < kNumPixels; i++) {
-            int offset = 2 * i; // 2 bytes per uint16_t
-            int val_uint16_t =
-                (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8);
-            float val_float = val_uint16_t / 65535.0f;
-            if (val_float < min) min = val_float;
-            if (val_float > max) max = val_float;
-        }
-
         // Extract values from second half of frame (where calibrated thermal data lives)
         int secondHalfOffset = kFrameWidth * kFrameHeight * kPixelSize;
         int centerOffset = secondHalfOffset + 2 * centerIndex;
@@ -493,6 +482,10 @@ public class MainActivity extends Activity {
             }
         }
 
+        // Color mapping bounds in raw calibrated units (default: auto from frame)
+        int mapMinRaw = minPixelRaw;
+        int mapMaxRaw = maxPixelRaw;
+
         // Calculate ROI min/max if enabled
         if (showROIOverlay) {
             int rx1 = Math.min(roiX1, roiX2),
@@ -529,61 +522,28 @@ public class MainActivity extends Activity {
             roiAvgPixelRaw = roiCount > 0 ? (int) (roiSum / roiCount) : 0;
         }
 
-        // In manual mode, map color palette to ±manualRangeDegrees around center pixel
+        // In manual mode, override mapping bounds with user-specified temperature range
         if (colorScaleMode == 1) {
-            float autoRange = max - min;
-            if (autoRange > 0.0001f) {
-                // Temperature uses raw/64-273.15, so 1 degree = 64 raw units in calibrated half
-                float tempRange = (maxPixelRaw - minPixelRaw) / 64.0f;
-                float degreesPerUnit = tempRange / autoRange;
-                if (Math.abs(degreesPerUnit) > 0.0001f) {
-                    int centerVal =
-                        (data[2 * centerIndex] & 0xFF) |
-                        ((data[2 * centerIndex + 1] & 0xFF) << 8);
-                    float delta = manualRangeDegrees / degreesPerUnit;
-                    min = centerVal / 65535.0f - delta;
-                    max = centerVal / 65535.0f + delta;
-                }
-            }
+            // Center ± range mode: map around center pixel temperature
+            mapMinRaw = centerPixelRaw - (int)(manualRangeDegrees * 64);
+            mapMaxRaw = centerPixelRaw + (int)(manualRangeDegrees * 64);
         } else if (colorScaleMode == 2) {
-            // Manual Top/Bottom mode: map color palette to absolute temperature range
-            float autoRange = max - min;
-            if (autoRange > 0.0001f) {
-                float tempRange = (maxPixelRaw - minPixelRaw) / 64.0f;
-                float degreesPerUnit = tempRange / autoRange;
-                if (Math.abs(degreesPerUnit) > 0.0001f) {
-                    int centerFirstHalf =
-                        (data[2 * centerIndex] & 0xFF) |
-                        ((data[2 * centerIndex + 1] & 0xFF) << 8);
-                    float centerCalibDeg = centerPixelRaw / 64.0f - 273.15f;
-                    float bottomDelta =
-                        (manualBottomDegrees - centerCalibDeg) / degreesPerUnit;
-                    float topDelta =
-                        (manualTopDegrees - centerCalibDeg) / degreesPerUnit;
-                    min = centerFirstHalf / 65535.0f + bottomDelta;
-                    max = centerFirstHalf / 65535.0f + topDelta;
-                }
-            }
+            // Manual Top/Bottom mode: map to absolute temperature range
+            mapMinRaw = (int)((manualBottomDegrees + 273.15f) * 64);
+            mapMaxRaw = (int)((manualTopDegrees + 273.15f) * 64);
         }
 
-        // Handle edge case where all pixels have same value (e.g. during camera init)
-        float range = max - min;
-        if (range < 0.0001f) {
-            range = 1.0f; // Avoid division by zero
-        }
+        // Render from calibrated second-half data using mapping bounds
+        int mapRange = mapMaxRaw - mapMinRaw;
+        if (mapRange < 1) mapRange = 1;
 
         for (int i = 0; i < kNumPixels; i++) {
-            int offset = 2 * i; // 2 bytes per uint16_t
-            int val_uint16_t =
-                (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8);
-
-            float val_float = (val_uint16_t / 65535.0f - min) / range;
-            // Clamp to valid range in case of floating point edge cases
-            if (val_float < 0.0f) val_float = 0.0f;
-            if (val_float > 1.0f) val_float = 1.0f;
-            val_uint16_t = (int) (val_float * 65535.0f);
-
-            pixels[i] = LUT[val_uint16_t]; // Lookup the ARGB value from LUT
+            int offset = secondHalfOffset + 2 * i;
+            int val = (data[offset] & 0xFF) | ((data[offset + 1] & 0xFF) << 8);
+            float normalized = (float)(val - mapMinRaw) / mapRange;
+            if (normalized < 0.0f) normalized = 0.0f;
+            if (normalized > 1.0f) normalized = 1.0f;
+            pixels[i] = LUT[(int)(normalized * 65535.0f)];
         }
 
         return Bitmap.createBitmap(
