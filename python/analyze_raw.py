@@ -19,36 +19,59 @@
 # plt.imshow(temp, interpolation='none', aspect='auto')
 # plt.show()
 
-import numpy as np
-import matplotlib.pyplot as plt
 import os
-import glob
+import subprocess
 
-directory = "/home/harry/android_infiray_viewer"  # Specify the path to your downloads directory
-pattern = os.path.join(directory, '*.bin')
-list_of_files = glob.glob(pattern)  # * means all if need specific format then *.csv
+import matplotlib.pyplot as plt
+import numpy as np
 
-if not list_of_files:  # check if list is empty
-    raise ValueError("No bin files found in the directory")
+# Pull latest raw capture from device
+print("Pulling latest thermal capture from device...")
+result = subprocess.run(
+    ["adb", "shell", "ls", "-t", "/sdcard/Download/thermal_camera*.bin"],
+    capture_output=True,
+    text=True,
+)
+if result.returncode != 0 or not result.stdout.strip():
+    raise ValueError(f"No thermal captures found on device: {result.stderr}")
 
-latest_file = max(list_of_files, key=os.path.getmtime)  # Get the most recent file
+latest_on_device = result.stdout.strip().split("\n")[0]
+print(f"Latest on device: {latest_on_device}")
 
-print(f"Loading data from the latest file: {latest_file}")
+latest_file = "/tmp/" + os.path.basename(latest_on_device)
+# latest_file = "/tmp/mouth.bin"
+subprocess.run(["adb", "pull", latest_on_device, latest_file], check=True)
 
-with open(latest_file, 'rb') as f:
+print(f"Loading data from: {latest_file}")
+
+with open(latest_file, "rb") as f:
     data = np.fromfile(f, dtype=np.uint16)
+
 
 data = data.reshape((-1, 192, 256))  # Assuming each frame is 192x256
 print(f"Video data shape: {data.shape}")
 print(f"data stats: {data.min()}, {data.max()}")
 
 # temp = data[-1].astype('float')  # Convert the last frame to float for visualization
-temp = data[50].astype('float')  # Convert the last frame to float for visualization
-# tmin = -40; tmax = 170  # Temperature range for conversion
+temp = data[-1].astype("float")  # Convert the last frame to float for visualization
+# tmin = -40
+# tmax = 170  # Temperature range for conversion
 # temp = temp / 65536  # Normalize the data to 0-1
 # temp = (tmax - tmin) * temp + tmin  # Convert to temperature scale
 
+# 19812 = 37 celcius
+# 16708 = 0 celcius
+slope = (37 - 0) / (19812 - 16708)
+temp = (temp - 16708) * slope
+
 plt.figure()
-plt.imshow(temp, interpolation='none', aspect='auto', cmap='viridis')  # Use a colormap that represents temperature
+plt.imshow(
+    temp, interpolation="none", aspect="auto", cmap="viridis"
+)  # Use a colormap that represents temperature
+plt.colorbar()  # Show the color bar
+
+temp_int = data[-1].astype("float")  # Convert the last frame to float for visualization
+plt.figure()
+plt.imshow(temp_int, interpolation="none", aspect="auto", cmap="viridis")
 plt.colorbar()  # Show the color bar
 plt.show()

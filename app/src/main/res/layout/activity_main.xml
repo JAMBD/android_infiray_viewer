@@ -4,6 +4,7 @@
     android:orientation="vertical"
     android:gravity="center"
     android:keepScreenOn="true"
+    android:fitsSystemWindows="true"
     android:background="@color/background">
 
     <FrameLayout
@@ -16,22 +17,119 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
 
-        <TextView
-            android:id="@+id/temperatureText"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="top|start"
-            android:layout_margin="16dp"
-            android:padding="8dp"
-            android:background="#80000000"
-            android:textColor="#FFFFFF"
-            android:textSize="24sp"
-            android:fontFamily="monospace"
-            android:text="----" />
+        <LinearLayout
+            android:id="@+id/manualRangeOverlay"
+            android:layout_width="48dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="end"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:background="#40000000">
+
+            <EditText
+                android:id="@+id/rangeLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="±2.0"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:padding="4dp"
+                android:gravity="center"
+                android:inputType="numberDecimal"
+                android:background="@android:color/transparent"
+                android:imeOptions="actionDone"
+                android:selectAllOnFocus="true"
+                android:singleLine="true" />
+
+            <FrameLayout
+                android:id="@+id/seekBarContainer"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <SeekBar
+                    android:id="@+id/rangeSeekBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_gravity="center"
+                    android:rotation="270"
+                    android:max="39"
+                    android:progress="3" />
+
+            </FrameLayout>
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/manualTopBottomOverlay"
+            android:layout_width="48dp"
+            android:layout_height="match_parent"
+            android:layout_gravity="end"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:background="#40000000">
+
+            <EditText
+                android:id="@+id/topTempLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="40.0"
+                android:textColor="#FFFF4444"
+                android:textSize="10sp"
+                android:padding="4dp"
+                android:gravity="center"
+                android:inputType="numberDecimal|numberSigned"
+                android:background="@android:color/transparent"
+                android:imeOptions="actionDone"
+                android:selectAllOnFocus="true"
+                android:singleLine="true" />
+
+            <FrameLayout
+                android:id="@+id/topBottomSeekBarContainer"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1">
+
+                <SeekBar
+                    android:id="@+id/bottomTempSeekBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_gravity="center"
+                    android:rotation="270"
+                    android:max="4400"
+                    android:progress="600" />
+
+                <SeekBar
+                    android:id="@+id/topTempSeekBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_gravity="center"
+                    android:rotation="270"
+                    android:max="4400"
+                    android:progress="800" />
+
+            </FrameLayout>
+
+            <EditText
+                android:id="@+id/bottomTempLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="20.0"
+                android:textColor="#FF4488FF"
+                android:textSize="10sp"
+                android:padding="4dp"
+                android:gravity="center"
+                android:inputType="numberDecimal|numberSigned"
+                android:background="@android:color/transparent"
+                android:imeOptions="actionDone"
+                android:selectAllOnFocus="true"
+                android:singleLine="true" />
+
+        </LinearLayout>
 
     </FrameLayout>
 
-    <!-- First row for Capture Image and Capture Raw buttons -->
+    <!-- Capture row: Image, Raw, Video -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -42,16 +140,22 @@
             android:id="@+id/getImageButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Capture Image" />
+            android:text="Image" />
 
         <Button
             android:id="@+id/getFrameButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Capture Raw" />
+            android:text="Raw" />
+
+        <Button
+            android:id="@+id/videoToggleButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Video" />
     </LinearLayout>
 
-    <!-- Second row for Start Video and Stop Video buttons -->
+    <!-- Controls row: Gain, Settings -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -59,24 +163,15 @@
         android:gravity="center">
 
         <Button
-            android:id="@+id/startVideoButton"
+            android:id="@+id/gainButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Start Video" />
+            android:text="High Range" />
 
         <Button
-            android:id="@+id/stopVideoButton"
+            android:id="@+id/settingsButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Stop Video"
-            android:enabled="false" />
+            android:text="Settings" />
     </LinearLayout>
-
-    <!-- Additional button for Ctrl, kept separately at the bottom -->
-    <Button
-        android:id="@+id/ctrlButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Ctrl"
-        android:layout_gravity="center_horizontal" />
 </LinearLayout>

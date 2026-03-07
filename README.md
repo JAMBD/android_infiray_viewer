@@ -1,12 +1,37 @@
-# Third party andoid app for Infiray thermal cameras
+# Third party Android app for Infiray thermal cameras
 
 An implementation of a UVC camera app specific to the Infiray P2Pro thermal camera.
 
-Current features:
-* Views the YUV422 stream.
-* Saves the YUV422 stream as a .png into a photo album.
-* Saves the whole frame (including the 16bit image) into the Downloads folder.
-* Send control transfers to the camera that changes the colour scheme.
+## Features
+
+**Viewing**
+- Live thermal camera stream (256x192 @ 25fps)
+- 11 color palettes (cycle with the palette button)
+
+**Capture**
+- Save images as PNG to gallery
+- Save raw 16-bit thermal data as .bin files to Downloads
+- Record video with H.264 encoding
+
+**Overlays**
+- Center crosshair with temperature reading
+- Min/max temperature tracking with markers
+- Region of Interest (ROI) - drag to select an area for min/max tracking within a region
+
+**Settings**
+- Toggle overlays on/off
+- Option to include overlays in saved images and videos
+- All settings persist between sessions
+
+**Remote Control**
+- Control via intents for automation (adb or other apps):
+  - `am broadcast -a info.jnlm.thermal_camera.CONTROL --es action capture_image`
+  - `am broadcast -a info.jnlm.thermal_camera.CONTROL --es action capture_raw`
+  - `am broadcast -a info.jnlm.thermal_camera.CONTROL --es action start_video`
+  - `am broadcast -a info.jnlm.thermal_camera.CONTROL --es action stop_video`
+  - `am broadcast -a info.jnlm.thermal_camera.CONTROL --es action cycle_color`
+  - `am broadcast -a info.jnlm.thermal_camera.CONTROL --es action toggle_center_crosshair`
+  - `am broadcast -a info.jnlm.thermal_camera.CONTROL --es action toggle_minmax`
 
 ![Screenshot](images/screenshot.jpg?raw=true "Screenshot")
 

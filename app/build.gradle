@@ -1,20 +1,30 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 34
+    compileSdkVersion 35
     namespace 'info.jnlm.thermal_camera'
 
     defaultConfig {
         applicationId "info.jnlm.thermal_camera"
         minSdkVersion 29
-        targetSdkVersion 34
-        versionCode 1
-        versionName "1.0"
+        targetSdkVersion 35
+        versionCode 6
+        versionName "1.5"
+    }
+
+    signingConfigs {
+        release {
+            storeFile file("../release-key.jks")
+            storePassword "android"
+            keyAlias "release"
+            keyPassword "android"
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled false
+            signingConfig signingConfigs.release
 		}
     }
    

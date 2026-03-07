@@ -2,10 +2,92 @@
 #include <libusb.h>
 #include <libuvc.h>
 #include <android/log.h>
+#include <unistd.h>
 #include "thermal_camera.h"
 
 #define  LOG_TAG    "ThermalCamera"
 #define  LOGD(...)  __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+
+// Helper: open libusb device from fd, returns 0 on success
+static int open_usb_device(int fd, libusb_context **ctx, libusb_device_handle **devh) {
+    *ctx = NULL;
+    *devh = NULL;
+    int r = libusb_init(ctx);
+    if (r != LIBUSB_SUCCESS) {
+        LOGD("libusb_init failed: %d", r);
+        return -1;
+    }
+    r = libusb_wrap_sys_device(*ctx, fd, devh);
+    if (r != LIBUSB_SUCCESS) {
+        LOGD("libusb_wrap failed: %d", r);
+        libusb_exit(*ctx);
+        *ctx = NULL;
+        return -1;
+    }
+    return 0;
+}
+
+// Helper: check if camera is ready (status register bits 0-1 == 0)
+static int check_camera_ready(libusb_device_handle *devh) {
+    uint8_t status = 0;
+    int r = libusb_control_transfer(devh, 0xC1, 0x44, 0x78, 0x200, &status, 1, 1000);
+    if (r < 0) return -1;
+    return (status & 0x03) == 0 ? 1 : 0;
+}
+
+// Helper: block until camera is ready, with timeout in ms. Returns 0 on ready, -1 on timeout/error.
+static int block_until_ready(libusb_device_handle *devh, int timeout_ms) {
+    int elapsed = 0;
+    while (elapsed < timeout_ms) {
+        int ready = check_camera_ready(devh);
+        if (ready < 0) return -1;
+        if (ready) return 0;
+        usleep(1000); // 1ms
+        elapsed++;
+    }
+    LOGD("block_until_ready: timed out after %dms", timeout_ms);
+    return -1;
+}
+
+// Helper: long command write (8-byte header to 0x9D00, then data to 0x1D08, then poll ready)
+static int long_cmd_write(libusb_device_handle *devh, uint8_t *header, int header_len,
+                          uint8_t *data, int data_len, int timeout_ms) {
+    int r = libusb_control_transfer(devh, 0x41, 0x45, 0x78, 0x9D00, header, header_len, 1000);
+    if (r < 0) {
+        LOGD("long_cmd_write: header transfer failed: %d", r);
+        return -1;
+    }
+    r = libusb_control_transfer(devh, 0x41, 0x45, 0x78, 0x1D08, data, data_len, 1000);
+    if (r < 0) {
+        LOGD("long_cmd_write: data transfer failed: %d", r);
+        return -1;
+    }
+    return block_until_ready(devh, timeout_ms);
+}
+
+// Helper: long command read (8 bytes to 0x9D00, 8 bytes to 0x1D08, poll ready, read from 0x1D10)
+static int long_cmd_read(libusb_device_handle *devh, uint8_t *header, int header_len,
+                         uint8_t *params, int params_len,
+                         uint8_t *result, int result_len, int timeout_ms) {
+    int r = libusb_control_transfer(devh, 0x41, 0x45, 0x78, 0x9D00, header, header_len, 1000);
+    if (r < 0) {
+        LOGD("long_cmd_read: header transfer failed: %d", r);
+        return -1;
+    }
+    r = libusb_control_transfer(devh, 0x41, 0x45, 0x78, 0x1D08, params, params_len, 1000);
+    if (r < 0) {
+        LOGD("long_cmd_read: params transfer failed: %d", r);
+        return -1;
+    }
+    r = block_until_ready(devh, timeout_ms);
+    if (r < 0) return -1;
+    r = libusb_control_transfer(devh, 0xC1, 0x44, 0x78, 0x1D10, result, result_len, 1000);
+    if (r < 0) {
+        LOGD("long_cmd_read: result read failed: %d", r);
+        return -1;
+    }
+    return 0;
+}
 
 
 JNIEXPORT jlong JNICALL Java_info_jnlm_thermal_1camera_MainActivity_initializeStream(JNIEnv *env, jobject thiz, jint fd) {
@@ -144,5 +226,90 @@ JNIEXPORT void JNICALL Java_info_jnlm_thermal_1camera_MainActivity_sendCtrl(JNIE
 	for (int i=0;i<26;i++){
 		LOGD("read %02x", data_read[i]);
 	}
-	
-} 
+
+}
+
+JNIEXPORT jint JNICALL Java_info_jnlm_thermal_1camera_MainActivity_setGainMode(JNIEnv *env, jobject thiz, jint fd, jint gain) {
+    libusb_context *ctx = NULL;
+    libusb_device_handle *devh = NULL;
+    if (open_usb_device(fd, &ctx, &devh) < 0) return -1;
+
+    // Long command write: SET prop_tpd_params (0x8514 | 0x4000 = 0xC514), param_idx=5 (GAIN_SEL), value=gain
+    // data1 to 0x9D00: cmd as LE u16, param_idx as BE u16, value as BE u32
+    uint8_t header[] = {0x14, 0xC5, 0x00, 0x05, 0x00, 0x00, 0x00, (uint8_t)gain};
+    // data2 to 0x1D08: p3=0, p4=0
+    uint8_t params[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+    LOGD("setGainMode: setting gain to %d", gain);
+    int r = long_cmd_write(devh, header, sizeof(header), params, sizeof(params), 5000);
+    if (r < 0) {
+        LOGD("setGainMode: failed");
+        libusb_exit(ctx);
+        return -1;
+    }
+    LOGD("setGainMode: success, gain=%d", gain);
+    libusb_exit(ctx);
+    return 0;
+}
+
+JNIEXPORT jint JNICALL Java_info_jnlm_thermal_1camera_MainActivity_getGainMode(JNIEnv *env, jobject thiz, jint fd) {
+    libusb_context *ctx = NULL;
+    libusb_device_handle *devh = NULL;
+    if (open_usb_device(fd, &ctx, &devh) < 0) return -1;
+
+    // Long command read: GET prop_tpd_params (0x8514), param_idx=5 (GAIN_SEL)
+    // data1 to 0x9D00: cmd as LE u16, param_idx as BE u16, value as BE u32 (0)
+    uint8_t header[] = {0x14, 0x85, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00};
+    // data2 to 0x1D08: p3=0, data_len=2
+    uint8_t params[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02};
+    uint8_t result[2] = {0};
+
+    LOGD("getGainMode: reading current gain");
+    int r = long_cmd_read(devh, header, sizeof(header), params, sizeof(params),
+                          result, sizeof(result), 5000);
+    if (r < 0) {
+        LOGD("getGainMode: failed");
+        libusb_exit(ctx);
+        return -1;
+    }
+    // Result is big-endian u16
+    int gain = (result[0] << 8) | result[1];
+    LOGD("getGainMode: current gain=%d", gain);
+    libusb_exit(ctx);
+    return gain;
+}
+
+JNIEXPORT jint JNICALL Java_info_jnlm_thermal_1camera_MainActivity_triggerShutter(JNIEnv *env, jobject thiz, jint fd) {
+    libusb_context *ctx = NULL;
+    libusb_device_handle *devh = NULL;
+    if (open_usb_device(fd, &ctx, &devh) < 0) return -1;
+
+    // Read current gain, then set it again to trigger NUC
+    uint8_t read_header[] = {0x14, 0x85, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00};
+    uint8_t read_params[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02};
+    uint8_t result[2] = {0};
+
+    LOGD("triggerShutter: reading current gain for re-set");
+    int r = long_cmd_read(devh, read_header, sizeof(read_header), read_params, sizeof(read_params),
+                          result, sizeof(result), 5000);
+    if (r < 0) {
+        LOGD("triggerShutter: failed to read gain");
+        libusb_exit(ctx);
+        return -1;
+    }
+    int gain = (result[0] << 8) | result[1];
+    LOGD("triggerShutter: current gain=%d, re-setting to trigger NUC", gain);
+
+    // Set same gain value to trigger NUC
+    uint8_t write_header[] = {0x14, 0xC5, 0x00, 0x05, 0x00, 0x00, 0x00, (uint8_t)gain};
+    uint8_t write_params[] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    r = long_cmd_write(devh, write_header, sizeof(write_header), write_params, sizeof(write_params), 5000);
+    if (r < 0) {
+        LOGD("triggerShutter: failed to re-set gain");
+        libusb_exit(ctx);
+        return -1;
+    }
+    LOGD("triggerShutter: NUC triggered successfully");
+    libusb_exit(ctx);
+    return 0;
+}
